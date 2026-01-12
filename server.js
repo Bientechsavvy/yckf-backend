@@ -25,7 +25,7 @@ app.use(cors());
 // ============================================
 // CONFIGURATION
 // ============================================
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || '5e83a80b862d52fdd6716a689c38d7b534e930baefc33057a6472722daded295';
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -1347,4 +1347,9 @@ app.listen(PORT, () => {
   console.log(`   ✓ Set up monitoring`);
   console.log(`   ✓ Configure email (EMAIL_USER and EMAIL_PASS in .env)\n`);
 });
+<<<<<<< HEAD
 module.exports = app;
+=======
+
+module.exports = app;
+>>>>>>> 5a4b4d8 (Update JWT_SECRET to a new default value)
