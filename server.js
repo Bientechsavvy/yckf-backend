@@ -43,13 +43,33 @@ const BACKUP_EMAIL = 'brightpeterkwakuboateng@gmail.com';
 let emailTransporter = null;
 
 if (EMAIL_USER && EMAIL_PASS) {
+  // emailTransporter = nodemailer.createTransport({
+  //   service: 'gmail',
+  //   auth: {
+  //     user: EMAIL_USER,
+  //     pass: EMAIL_PASS
+  //   }
+  // });
   emailTransporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: EMAIL_USER,
-      pass: EMAIL_PASS
-    }
-  });
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // MUST be false for 587
+  auth: {
+    user: EMAIL_USER,
+    pass: EMAIL_PASS
+  },
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
+  socketTimeout: 20000
+});
+
+  emailTransporter.verify((err, success) => {
+  if (err) {
+    console.error('❌ SMTP verification failed:', err);
+  } else {
+    console.log('✅ SMTP server is ready to send emails');
+  }
+});
   console.log('✅ Email service configured');
 } else {
   console.log('⚠️  Email service not configured - set EMAIL_USER and EMAIL_PASS in .env');
