@@ -1,6 +1,7 @@
 // ============================================
 // YCKF BACKEND SERVER - PRODUCTION READY
 // File: server.js
+// WITH AUTO-EMAIL FUNCTIONALITY
 // ============================================
 
 const express = require('express');
@@ -9,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
@@ -16,7 +18,8 @@ const app = express();
 // ============================================
 // MIDDLEWARE
 // ============================================
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increased for base64 images
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
 // ============================================
@@ -26,8 +29,34 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-i
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+// Email Configuration
+const EMAIL_USER = process.env.EMAIL_USER;
+const EMAIL_PASS = process.env.EMAIL_PASS;
+
+// Official YCKF Email Addresses
+const ADMIN_EMAIL = 'yckfadmin@youngcyberknightsfoundation.org';
+const BACKUP_EMAIL = 'brightpeterkwakuboateng@gmail.com';
+
 // ============================================
-// IN-MEMORY DATABASES (Replace with real DB in production)
+// EMAIL TRANSPORTER SETUP
+// ============================================
+let emailTransporter = null;
+
+if (EMAIL_USER && EMAIL_PASS) {
+  emailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS
+    }
+  });
+  console.log('✅ Email service configured');
+} else {
+  console.log('⚠️  Email service not configured - set EMAIL_USER and EMAIL_PASS in .env');
+}
+
+// ============================================
+// IN-MEMORY DATABASES
 // ============================================
 const users = [
   {
@@ -53,27 +82,39 @@ const coupons = [];
 const couponRedemptions = [];
 const demoSessions = [];
 const auditLogs = [];
+const resetCodes = [];
 
-// Demo token (rotate this regularly in production)
 let currentDemoToken = bcrypt.hashSync('DEMO-YCKF-2024', 10);
 
 // ============================================
 // RATE LIMITING
 // ============================================
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   message: { error: 'Too many login attempts, please try again later' }
 });
 
 const couponLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // 10 attempts
+  windowMs: 60 * 1000,
+  max: 10,
   message: { error: 'Too many coupon attempts, please slow down' }
 });
 
+const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  message: { error: 'Too many password reset attempts, please try again later' }
+});
+
+const emailLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many email requests, please slow down' }
+});
+
 // ============================================
-// MIDDLEWARE - JWT VERIFICATION
+// MIDDLEWARE
 // ============================================
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -92,9 +133,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// ============================================
-// MIDDLEWARE - ADMIN ONLY
-// ============================================
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') {
     logAudit('UNAUTHORIZED_ADMIN_ACCESS_ATTEMPT', req.user.id, null, { 
@@ -120,6 +158,330 @@ function logAudit(action, performedBy, targetUser, details) {
 }
 
 // ============================================
+// EMAIL HELPER FUNCTIONS
+// ============================================
+function generateResetCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function sendResetCodeEmail(email, code, userName) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const mailOptions = {
+    from: `"YCKF App" <${EMAIL_USER}>`,
+    to: email,
+    subject: 'Password Reset Code - YCKF',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0066cc; color: white; padding: 20px; text-align: center; }
+          .content { background: #f9f9f9; padding: 30px; }
+          .code-box { background: white; border: 2px dashed #0066cc; padding: 20px; text-align: center; margin: 20px 0; }
+          .code { font-size: 32px; font-weight: bold; color: #0066cc; letter-spacing: 5px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>��� Password Reset Request</h1>
+          </div>
+          <div class="content">
+            <p>Hello ${userName || 'User'},</p>
+            <p>We received a request to reset your password for your YCKF account.</p>
+            <p>Your password reset code is:</p>
+            <div class="code-box">
+              <div class="code">${code}</div>
+            </div>
+            <p><strong>This code will expire in 15 minutes.</strong></p>
+            <p>If you didn't request this, please ignore this email.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+
+// ============================================
+// AUTO-EMAIL: CYBERCRIME REPORT
+// ============================================
+async function sendCybercrimeReportEmail(reportData) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const dateStr = new Date(reportData.dateOfIncident).toLocaleDateString();
+
+  const mailOptions = {
+    from: `"YCKF App" <${EMAIL_USER}>`,
+    to: [ADMIN_EMAIL, BACKUP_EMAIL],
+    subject: `Cybercrime Report - Case ID: ${reportData.caseId}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 700px; margin: 0 auto; padding: 20px; }
+          .header { background: #dc2626; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+          .section { margin-bottom: 25px; }
+          .section-title { font-size: 18px; font-weight: bold; color: #dc2626; margin-bottom: 10px; border-bottom: 2px solid #dc2626; padding-bottom: 5px; }
+          .info-row { display: flex; margin-bottom: 8px; }
+          .info-label { font-weight: bold; min-width: 180px; color: #555; }
+          .info-value { color: #333; }
+          .details-box { background: white; padding: 15px; border-left: 4px solid #dc2626; margin-top: 10px; }
+          .map-link { display: inline-block; background: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>��� CYBERCRIME REPORT</h1>
+            <p>Case ID: ${reportData.caseId}</p>
+          </div>
+          <div class="content">
+            <div class="section">
+              <div class="section-title">REPORTER INFORMATION</div>
+              <div class="info-row"><span class="info-label">Full Name:</span><span class="info-value">${reportData.fullName}</span></div>
+              <div class="info-row"><span class="info-label">Email:</span><span class="info-value">${reportData.email}</span></div>
+              <div class="info-row"><span class="info-label">Phone:</span><span class="info-value">${reportData.phoneNumber}</span></div>
+              <div class="info-row"><span class="info-label">City/Location:</span><span class="info-value">${reportData.city}</span></div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INCIDENT INFORMATION</div>
+              <div class="info-row"><span class="info-label">Date of Incident:</span><span class="info-value">${dateStr}</span></div>
+              <div class="info-row"><span class="info-label">Type of Cybercrime:</span><span class="info-value">${reportData.typeOfCybercrime}</span></div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INCIDENT DETAILS</div>
+              <div class="details-box">${reportData.details}</div>
+            </div>
+
+            ${reportData.location ? `
+            <div class="section">
+              <div class="section-title">GPS LOCATION</div>
+              <div class="info-row"><span class="info-label">Coordinates:</span><span class="info-value">${reportData.location.latitude.toFixed(6)}, ${reportData.location.longitude.toFixed(6)}</span></div>
+              ${reportData.location.accuracy ? `<div class="info-row"><span class="info-label">Accuracy:</span><span class="info-value">±${Math.round(reportData.location.accuracy)}m</span></div>` : ''}
+              <a href="https://maps.google.com/?q=${reportData.location.latitude},${reportData.location.longitude}" class="map-link">View on Google Maps</a>
+            </div>
+            ` : ''}
+
+            <div class="section">
+              <div class="section-title">SUBMISSION INFO</div>
+              <div class="info-row"><span class="info-label">Submitted via:</span><span class="info-value">YCKF Mobile App</span></div>
+              <div class="info-row"><span class="info-label">Timestamp:</span><span class="info-value">${new Date().toLocaleString()}</span></div>
+              ${reportData.userId ? `<div class="info-row"><span class="info-label">User ID:</span><span class="info-value">${reportData.userId}</span></div>` : ''}
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    attachments: reportData.evidencePhotos && reportData.evidencePhotos.length > 0
+      ? reportData.evidencePhotos.map((photo, index) => ({
+          filename: `evidence_${index + 1}.jpg`,
+          content: photo.split('base64,')[1] || photo,
+          encoding: 'base64'
+        }))
+      : []
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+
+// ============================================
+// AUTO-EMAIL: CONTACT MESSAGE
+// ============================================
+async function sendContactMessageEmail(contactData) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const mailOptions = {
+    from: `"YCKF App" <${EMAIL_USER}>`,
+    to: [ADMIN_EMAIL, BACKUP_EMAIL],
+    replyTo: contactData.email,
+    subject: `Contact Form Submission from ${contactData.name}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0066cc; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+          .section { margin-bottom: 20px; }
+          .section-title { font-size: 16px; font-weight: bold; color: #0066cc; margin-bottom: 10px; border-bottom: 2px solid #0066cc; padding-bottom: 5px; }
+          .info-row { margin-bottom: 8px; }
+          .info-label { font-weight: bold; color: #555; }
+          .message-box { background: white; padding: 15px; border-left: 4px solid #0066cc; margin-top: 10px; white-space: pre-wrap; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>��� CONTACT FORM MESSAGE</h1>
+          </div>
+          <div class="content">
+            <div class="section">
+              <div class="section-title">SENDER INFORMATION</div>
+              <div class="info-row"><span class="info-label">Name:</span> ${contactData.name}</div>
+              <div class="info-row"><span class="info-label">Email:</span> ${contactData.email}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">MESSAGE</div>
+              <div class="message-box">${contactData.message}</div>
+            </div>
+
+            <div class="section">
+              <div class="info-row"><span class="info-label">Sent via:</span> YCKF Mobile App</div>
+              <div class="info-row"><span class="info-label">Timestamp:</span> ${new Date().toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+
+// ============================================
+// AUTO-EMAIL: THIEF DETECTION EVIDENCE
+// ============================================
+async function sendThiefDetectionEvidenceEmail(evidenceData) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const date = new Date(evidenceData.timestamp);
+  const dateStr = date.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: true
+  });
+
+  const mailOptions = {
+    from: `"YCKF Security Alert" <${EMAIL_USER}>`,
+    to: [ADMIN_EMAIL, BACKUP_EMAIL],
+    subject: '��� YCKF Security Alert - Unauthorized Access Detected',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 700px; margin: 0 auto; padding: 20px; }
+          .header { background: #dc2626; color: white; padding: 25px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+          .alert-box { background: #fee2e2; border-left: 4px solid #dc2626; padding: 15px; margin-bottom: 20px; }
+          .section { margin-bottom: 25px; }
+          .section-title { font-size: 18px; font-weight: bold; color: #dc2626; margin-bottom: 10px; border-bottom: 2px solid #dc2626; padding-bottom: 5px; }
+          .info-row { margin-bottom: 8px; }
+          .info-label { font-weight: bold; min-width: 150px; display: inline-block; color: #555; }
+          .map-link { display: inline-block; background: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px; }
+          .actions-box { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-top: 20px; }
+          .actions-box ol { margin: 10px 0; padding-left: 20px; }
+          .footer { margin-top: 30px; padding-top: 20px; border-top: 2px solid #ddd; text-align: center; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>⚠️ UNAUTHORIZED ACCESS DETECTED</h1>
+            <p style="margin: 0; font-size: 14px;">YCKF Mobile Security System</p>
+          </div>
+          <div class="content">
+            <div class="alert-box">
+              <strong>SECURITY ALERT:</strong> An unauthorized unlock attempt has been detected on a YCKF protected device.
+            </div>
+
+            <div class="section">
+              <div class="section-title">��� DETECTION DETAILS</div>
+              <div class="info-row"><span class="info-label">Evidence ID:</span> ${evidenceData.evidenceId}</div>
+              <div class="info-row"><span class="info-label">Timestamp:</span> ${dateStr}</div>
+              <div class="info-row"><span class="info-label">Date/Time:</span> ${date.toLocaleDateString()} at ${date.toLocaleTimeString()}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">��� LOCATION INFORMATION</div>
+              <div class="info-row"><span class="info-label">Latitude:</span> ${evidenceData.location.latitude.toFixed(6)}</div>
+              <div class="info-row"><span class="info-label">Longitude:</span> ${evidenceData.location.longitude.toFixed(6)}</div>
+              ${evidenceData.location.accuracy ? `<div class="info-row"><span class="info-label">Accuracy:</span> ±${Math.round(evidenceData.location.accuracy)} meters</div>` : ''}
+              ${evidenceData.address ? `<div class="info-row"><span class="info-label">Address:</span> ${evidenceData.address}</div>` : ''}
+              <a href="https://maps.google.com/?q=${evidenceData.location.latitude},${evidenceData.location.longitude}" class="map-link">��� View on Google Maps</a>
+            </div>
+
+            <div class="section">
+              <div class="section-title">��� DEVICE INFORMATION</div>
+              <div class="info-row"><span class="info-label">Model:</span> ${evidenceData.deviceModel || 'Unknown'}</div>
+              <div class="info-row"><span class="info-label">Operating System:</span> ${evidenceData.deviceOS || 'Unknown'}</div>
+              ${evidenceData.batteryLevel !== undefined ? `<div class="info-row"><span class="info-label">Battery Level:</span> ${evidenceData.batteryLevel}%</div>` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">��� EVIDENCE CAPTURED</div>
+              <div class="info-row"><span class="info-label">Type:</span> ${evidenceData.mediaType === 'photo' ? 'Photo (Front Camera)' : 'Video Recording'}</div>
+              <div class="info-row"><span class="info-label">Media File:</span> Attached to this email</div>
+              <div class="info-row"><span class="info-label">Capture Method:</span> Silent background capture</div>
+            </div>
+
+            <div class="actions-box">
+              <strong>⚡ IMMEDIATE ACTIONS RECOMMENDED:</strong>
+              <ol>
+                <li>Review the attached evidence immediately</li>
+                <li>Contact the device owner if registered in system</li>
+                <li>Track device location if still active</li>
+                <li>Consider reporting to local authorities if theft suspected</li>
+                <li>Log incident in YCKF Security Dashboard</li>
+              </ol>
+            </div>
+
+            <div class="footer">
+              <p><strong>��� SECURITY NOTICE</strong></p>
+              <p>This alert was automatically generated by the YCKF Mobile Security System.<br>
+              The unauthorized user was NOT notified of the evidence capture.<br>
+              All evidence has been securely transmitted and logged.</p>
+              <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+              <p><strong>Young Cyber Knights Foundation</strong><br>
+              Security & Protection Division<br>
+              Automated Security Alert System</p>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    attachments: evidenceData.mediaBase64 ? [{
+      filename: `evidence_${evidenceData.evidenceId}.${evidenceData.mediaType === 'photo' ? 'jpg' : 'mp4'}`,
+      content: evidenceData.mediaBase64,
+      encoding: 'base64'
+    }] : []
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+
+// ============================================
 // HEALTH CHECK
 // ============================================
 app.get('/', (req, res) => {
@@ -140,10 +502,8 @@ app.get('/health', (req, res) => {
 });
 
 // ============================================
-// 1. AUTHENTICATION ENDPOINTS
+// AUTH ENDPOINTS (Existing - No Changes)
 // ============================================
-
-// Register new user
 app.post('/auth/register', async (req, res) => {
   try {
     const { email, password, name } = req.body;
@@ -152,22 +512,19 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({ error: 'Invalid email format' });
     }
 
-    // Check if user exists
     const existingUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    // Create user
     const passwordHash = await bcrypt.hash(password, 10);
     const newUser = {
-      id: uuidv4(),
+          id: uuidv4(),
       email: email.toLowerCase(),
       name: name || email.split('@')[0],
       passwordHash,
@@ -176,10 +533,8 @@ app.post('/auth/register', async (req, res) => {
     };
 
     users.push(newUser);
-
     logAudit('USER_REGISTERED', newUser.id, newUser.id, { email: newUser.email });
 
-    // Generate token
     const token = jwt.sign(
       { id: newUser.id, email: newUser.email, role: newUser.role },
       JWT_SECRET,
@@ -202,7 +557,6 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-// Login
 app.post('/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -211,13 +565,11 @@ app.post('/auth/login', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // Find user
     const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Verify password
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
       logAudit('FAILED_LOGIN_ATTEMPT', email, user.id, { email });
@@ -226,7 +578,6 @@ app.post('/auth/login', authLimiter, async (req, res) => {
 
     logAudit('USER_LOGIN', user.id, user.id, { email });
 
-    // Generate token
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       JWT_SECRET,
@@ -249,13 +600,11 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Logout
 app.post('/auth/logout', authenticateToken, (req, res) => {
   logAudit('USER_LOGOUT', req.user.id, req.user.id, {});
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// Get current user
 app.get('/auth/me', authenticateToken, (req, res) => {
   const user = users.find(u => u.id === req.user.id);
   if (!user) {
@@ -271,8 +620,279 @@ app.get('/auth/me', authenticateToken, (req, res) => {
 });
 
 // ============================================
-// 2. PREMIUM ENTITLEMENT ENDPOINT
+// PASSWORD RESET ENDPOINTS (Existing - No Changes)
 // ============================================
+app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({ 
+        error: 'Email service is not configured. Please contact support.' 
+      });
+    }
+
+    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (!user) {
+      console.log(`Password reset requested for non-existent email: ${email}`);
+      return res.json({ 
+        success: true, 
+        message: 'If an account exists with this email, a reset code has been sent.' 
+      });
+    }
+
+    const code = generateResetCode();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    resetCodes.push({
+      email: email.toLowerCase(),
+      code,
+      expiresAt,
+      used: false,
+      createdAt: new Date().toISOString()
+    });
+
+    try {
+      await sendResetCodeEmail(email, code, user.name);
+      logAudit('PASSWORD_RESET_REQUESTED', user.id, user.id, { email });
+      
+      res.json({
+        success: true,
+        message: 'Password reset code has been sent to your email.'
+      });
+    } catch (emailError) {
+      console.error('Failed to send reset email:', emailError);
+      return res.status(500).json({ 
+        error: 'Failed to send reset code. Please try again later.' 
+      });
+    }
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Failed to process password reset request' });
+  }
+});
+
+app.post('/auth/verify-reset-code', resetPasswordLimiter, (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and code are required' });
+    }
+
+    const resetCode = resetCodes.find(
+      rc => rc.email.toLowerCase() === email.toLowerCase() && 
+            rc.code === code &&
+            !rc.used &&
+            new Date(rc.expiresAt) > new Date()
+    );
+
+    if (!resetCode) {
+      return res.status(400).json({ 
+        error: 'Invalid or expired reset code' 
+      });
+    }
+
+    logAudit('PASSWORD_RESET_CODE_VERIFIED', email, null, { email });
+
+    res.json({
+      success: true,
+      message: 'Reset code verified successfully'
+    });
+  } catch (error) {
+    console.error('Verify reset code error:', error);
+    res.status(500).json({ error: 'Failed to verify reset code' });
+  }
+});
+
+app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ 
+        error: 'Email, code, and new password are required' 
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ 
+        error: 'Password must be at least 6 characters long' 
+      });
+    }
+
+    const resetCode = resetCodes.find(
+      rc => rc.email.toLowerCase() === email.toLowerCase() && 
+            rc.code === code &&
+            !rc.used &&
+            new Date(rc.expiresAt) > new Date()
+    );
+
+    if (!resetCode) {
+      return res.status(400).json({ 
+        error: 'Invalid or expired reset code' 
+      });
+    }
+
+    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    resetCode.used = true;
+
+    logAudit('PASSWORD_RESET_COMPLETED', user.id, user.id, { email });
+
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully. Please login with your new password.'
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// ============================================
+// AUTO-EMAIL ENDPOINTS
+// ============================================
+
+// 1. AUTO-SEND CYBERCRIME REPORT
+app.post('/email/cybercrime-report', authenticateToken, emailLimiter, async (req, res) => {
+  try {
+    const reportData = req.body;
+
+    if (!reportData.caseId || !reportData.fullName || !reportData.email) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required fields (caseId, fullName, email)' 
+      });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'Email service not configured' 
+      });
+    }
+
+    // Add user ID to report
+    reportData.userId = req.user.id;
+
+    console.log('��� Sending cybercrime report email:', reportData.caseId);
+    
+    await sendCybercrimeReportEmail(reportData);
+    
+    logAudit('CYBERCRIME_REPORT_SENT', req.user.id, null, { 
+      caseId: reportData.caseId 
+    });
+
+    res.json({
+      success: true,
+      message: 'Cybercrime report sent successfully'
+    });
+
+  } catch (error) {
+    console.error('Failed to send cybercrime report:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to send cybercrime report email' 
+    });
+  }
+});
+
+// 2. AUTO-SEND CONTACT MESSAGE
+app.post('/email/contact-message', emailLimiter, async (req, res) => {
+  try {
+    const contactData = req.body;
+
+    if (!contactData.name || !contactData.email || !contactData.message) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required fields (name, email, message)' 
+      });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'Email service not configured' 
+      });
+    }
+
+    console.log('��� Sending contact message from:', contactData.email);
+    
+    await sendContactMessageEmail(contactData);
+    
+    logAudit('CONTACT_MESSAGE_SENT', contactData.email, null, { 
+      name: contactData.name 
+    });
+
+    res.json({
+      success: true,
+      message: 'Contact message sent successfully'
+    });
+
+  } catch (error) {
+    console.error('Failed to send contact message:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to send contact message email' 
+    });
+  }
+});
+
+// 3. AUTO-SEND THIEF DETECTION EVIDENCE (NO AUTH REQUIRED - SECURITY FEATURE)
+app.post('/email/thief-detection', emailLimiter, async (req, res) => {
+  try {
+    const evidenceData = req.body;
+
+    if (!evidenceData.evidenceId || !evidenceData.location) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required fields (evidenceId, location)' 
+      });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'Email service not configured' 
+      });
+    }
+
+    console.log('��� SECURITY ALERT - Sending thief detection evidence:', evidenceData.evidenceId);
+    
+    await sendThiefDetectionEvidenceEmail(evidenceData);
+    
+    logAudit('THIEF_DETECTION_ALERT_SENT', 'SYSTEM', null, { 
+      evidenceId: evidenceData.evidenceId 
+    });
+
+    res.json({
+      success: true,
+      message: 'Thief detection evidence sent successfully'
+    });
+
+  } catch (error) {
+    console.error('Failed to send thief detection evidence:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to send thief detection evidence email' 
+    });
+  }
+});
+
+// ============================================
+// REMAINING ENDPOINTS (No Changes)
+// ============================================
+
 app.get('/entitlements', authenticateToken, (req, res) => {
   const userId = req.user.id;
   const user = users.find(u => u.id === userId);
@@ -281,7 +901,6 @@ app.get('/entitlements', authenticateToken, (req, res) => {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  // Check 1: Admin Role
   if (user.role === 'admin') {
     return res.json({
       premium: true,
@@ -293,7 +912,6 @@ app.get('/entitlements', authenticateToken, (req, res) => {
     });
   }
 
-  // Check 2: Active Subscription
   const subscription = subscriptions.find(
     s => s.userId === userId && s.isActive && new Date(s.expiresAt) > new Date()
   );
@@ -309,7 +927,6 @@ app.get('/entitlements', authenticateToken, (req, res) => {
     });
   }
 
-  // Check 3: Active Coupon Redemption
   const activeCoupon = couponRedemptions.find(
     r => r.userId === userId && r.isActive && new Date(r.expiresAt) > new Date()
   );
@@ -327,7 +944,6 @@ app.get('/entitlements', authenticateToken, (req, res) => {
     });
   }
 
-  // Check 4: Active Demo Session
   const demoSession = demoSessions.find(
     s => s.userId === userId && s.isActive && new Date(s.expiresAt) > new Date()
   );
@@ -345,7 +961,6 @@ app.get('/entitlements', authenticateToken, (req, res) => {
     });
   }
 
-  // No premium access
   res.json({
     premium: false,
     reason: 'none',
@@ -356,11 +971,6 @@ app.get('/entitlements', authenticateToken, (req, res) => {
   });
 });
 
-// ============================================
-// 3. SUBSCRIPTION ENDPOINTS
-// ============================================
-
-// Activate subscription after payment
 app.post('/subscriptions/activate', authenticateToken, (req, res) => {
   try {
     const { paymentReference, paymentMethod } = req.body;
@@ -399,11 +1009,6 @@ app.post('/subscriptions/activate', authenticateToken, (req, res) => {
   }
 });
 
-// ============================================
-// 4. COUPON ENDPOINTS
-// ============================================
-
-// Validate coupon
 app.post('/coupons/validate', authenticateToken, couponLimiter, (req, res) => {
   try {
     const { couponCode } = req.body;
@@ -443,7 +1048,6 @@ app.post('/coupons/validate', authenticateToken, couponLimiter, (req, res) => {
   }
 });
 
-// Redeem coupon
 app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
   try {
     const { couponCode, durationHours } = req.body;
@@ -467,7 +1071,6 @@ app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
       return res.status(400).json({ error: 'Coupon usage limit reached' });
     }
 
-    // Check if user already has active redemption
     const existingRedemption = couponRedemptions.find(
       r => r.userId === userId && r.isActive && new Date(r.expiresAt) > new Date()
     );
@@ -514,11 +1117,6 @@ app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
   }
 });
 
-// ============================================
-// 5. DEMO ACCESS ENDPOINTS
-// ============================================
-
-// Activate demo session
 app.post('/admin/demo/activate', authenticateToken, couponLimiter, async (req, res) => {
   try {
     const { demoToken, deviceId } = req.body;
@@ -581,11 +1179,6 @@ app.post('/admin/demo/activate', authenticateToken, couponLimiter, async (req, r
   }
 });
 
-// ============================================
-// 6. ADMIN ENDPOINTS
-// ============================================
-
-// Create coupon (Admin only)
 app.post('/admin/coupons/create', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { code, description, expiresAt, maxRedemptions } = req.body;
@@ -625,12 +1218,10 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, (req, res) =>
   }
 });
 
-// Get all coupons (Admin only)
 app.get('/admin/coupons', authenticateToken, requireAdmin, (req, res) => {
   res.json({ coupons });
 });
 
-// Deactivate coupon (Admin only)
 app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { code } = req.body;
@@ -651,7 +1242,6 @@ app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, (req, res
   }
 });
 
-// Reactivate coupon (Admin only)
 app.post('/admin/coupons/reactivate', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { code } = req.body;
@@ -672,19 +1262,16 @@ app.post('/admin/coupons/reactivate', authenticateToken, requireAdmin, (req, res
   }
 });
 
-// Get all redemptions (Admin only)
 app.get('/admin/redemptions', authenticateToken, requireAdmin, (req, res) => {
   res.json({ redemptions: couponRedemptions });
 });
 
-// Get audit logs (Admin only)
 app.get('/admin/audit-logs', authenticateToken, requireAdmin, (req, res) => {
   const limit = parseInt(req.query.limit) || 100;
   const logs = auditLogs.slice(-limit).reverse();
   res.json({ logs });
 });
 
-// Rotate demo token (Admin only)
 app.post('/admin/demo/rotate-token', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { newToken } = req.body;
@@ -708,9 +1295,7 @@ app.post('/admin/demo/rotate-token', authenticateToken, requireAdmin, async (req
   }
 });
 
-// ============================================
-// CLEANUP EXPIRED SESSIONS
-// ============================================
+// CLEANUP
 setInterval(() => {
   const now = new Date();
   
@@ -734,31 +1319,32 @@ setInterval(() => {
       console.log(`[CLEANUP] Deactivated expired subscription: ${s.id}`);
     }
   });
+
+  resetCodes.forEach(rc => {
+    if (!rc.used && new Date(rc.expiresAt) < now) {
+      rc.used = true;
+      console.log(`[CLEANUP] Expired reset code for: ${rc.email}`);
+    }
+  });
 }, 60000);
 
-// ============================================
-// ERROR HANDLING
-// ============================================
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// ============================================
-// START SERVER
-// ============================================
 app.listen(PORT, () => {
-  console.log(`\n🚀 YCKF Backend Server running on port ${PORT}`);
-  console.log(`📝 Environment: ${NODE_ENV}`);
-  console.log(`\n📝 Default Users:`);
+  console.log(`\n��� YCKF Backend Server running on port ${PORT}`);
+  console.log(`��� Environment: ${NODE_ENV}`);
+  console.log(`\n��� Default Users:`);
   console.log(`   Admin: admin@yckf.org / SecureAdmin@2024`);
   console.log(`   User:  user@yckf.org / TestUser@2024`);
-  console.log(`\n🔐 Demo Token: DEMO-YCKF-2024`);
+  console.log(`\n��� Demo Token: DEMO-YCKF-2024`);
   console.log(`\n⚠️  Production checklist:`);
   console.log(`   ✓ Change JWT_SECRET`);
   console.log(`   ✓ Use real database`);
   console.log(`   ✓ Enable HTTPS`);
-  console.log(`   ✓ Set up monitoring\n`);
+  console.log(`   ✓ Set up monitoring`);
+  console.log(`   ✓ Configure email (EMAIL_USER and EMAIL_PASS in .env)\n`);
 });
-
 module.exports = app;
