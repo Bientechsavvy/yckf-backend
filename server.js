@@ -1347,9 +1347,5 @@ app.listen(PORT, () => {
   console.log(`   ✓ Set up monitoring`);
   console.log(`   ✓ Configure email (EMAIL_USER and EMAIL_PASS in .env)\n`);
 });
-<<<<<<< HEAD
-module.exports = app;
-=======
 
 module.exports = app;
->>>>>>> 5a4b4d8 (Update JWT_SECRET to a new default value)
