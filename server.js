@@ -28,14 +28,6 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
 
-// const app = express();
-
-// // ============================================
-// // MIDDLEWARE
-// // ============================================
-// app.use(express.json({ limit: '50mb' })); // Increased for base64 images
-// app.use(express.urlencoded({ limit: '50mb', extended: true }));
-// app.use(cors());
 
 // ============================================
 // CONFIGURATION
@@ -55,32 +47,45 @@ const BACKUP_EMAIL = 'brightpeterkwakuboateng@gmail.com';
 // ============================================
 // EMAIL TRANSPORTER SETUP
 // ============================================
+// ============================================
+// EMAIL TRANSPORTER SETUP (FIXED FOR RENDER)
+// ============================================
 let emailTransporter = null;
 
 if (EMAIL_USER && EMAIL_PASS) {
-  // emailTransporter = nodemailer.createTransport({
-  //   service: 'gmail',
-  //   auth: {
-  //     user: EMAIL_USER,
-  //     pass: EMAIL_PASS
-  //   }
-  // });
-emailTransporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
+  emailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Use SSL
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS
+    },
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 10000,
+    socketTimeout: 10000
+  });
 
-  console.log('✅ Email service configured');
+  // Verify connection
+  emailTransporter.verify((error, success) => {
+    if (error) {
+      console.log('❌ Gmail SMTP connection failed:', error.message);
+      console.log('⚠️  Troubleshooting:');
+      console.log('   1. Verify EMAIL_USER and EMAIL_PASS are set in Render');
+      console.log('   2. EMAIL_PASS must be a 16-char App Password (not regular password)');
+      console.log('   3. Generate App Password at: https://myaccount.google.com/apppasswords');
+      console.log('   4. Enable 2FA on your Gmail account first');
+    } else {
+      console.log('✅ Email service connected successfully');
+      console.log(`📧 Sending from: ${EMAIL_USER}`);
+    }
+  });
 } else {
   console.log('⚠️  Email service not configured - set EMAIL_USER and EMAIL_PASS in .env');
 }
-
 // ============================================
 // IN-MEMORY DATABASES
 // ============================================
@@ -1359,9 +1364,10 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n��� YCKF Backend Server running on port ${PORT}`);
-  console.log(`��� Environment: ${NODE_ENV}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🚀 YCKF Backend Server running on port ${PORT}`);
+  console.log(`🌍 Environment: ${NODE_ENV}`);
+  console.log(`🌐 Listening on: 0.0.0.0:${PORT}`);
   console.log(`\n��� Default Users:`);
   console.log(`   Admin: admin@yckf.org / SecureAdmin@2024`);
   console.log(`   User:  user@yckf.org / TestUser@2024`);
