@@ -36,14 +36,23 @@ const JWT_SECRET = process.env.JWT_SECRET || '5e83a80b862d52fdd6716a689c38d7b534
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// Email Configuration
-// Email Configuration
-const EMAIL_USER = process.env.EMAIL_USER?.trim();
-const EMAIL_PASS = process.env.EMAIL_PASS?.trim();
 
-console.log('📧 Email Config Check:');
-console.log(`   EMAIL_USER is ${EMAIL_USER ? 'SET ✓' : 'MISSING ✗'}`);
-console.log(`   EMAIL_PASS is ${EMAIL_PASS ? 'SET ✓' : 'MISSING ✗'}`);
+// ============================================
+// EMAIL CONFIGURATION
+// ============================================
+const EMAIL_USER = process.env.EMAIL_USER;
+const EMAIL_PASS = process.env.EMAIL_PASS;
+
+// Debug logging - CRITICAL for Railway deployment
+console.log('\n📧 ============================================');
+console.log('📧 EMAIL CONFIGURATION CHECK');
+console.log('📧 ============================================');
+console.log(`📧 EMAIL_USER exists: ${EMAIL_USER ? 'YES ✓' : 'NO ✗'}`);
+console.log(`📧 EMAIL_PASS exists: ${EMAIL_PASS ? 'YES ✓' : 'NO ✗'}`);
+if (EMAIL_USER) console.log(`📧 EMAIL_USER value: ${EMAIL_USER}`);
+if (EMAIL_PASS) console.log(`📧 EMAIL_PASS length: ${EMAIL_PASS.length} chars`);
+console.log('📧 ============================================\n');
+
 // Official YCKF Email Addresses
 const ADMIN_EMAIL = 'yckfadmin@youngcyberknightsfoundation.org';
 const BACKUP_EMAIL = 'brightpeterkwakuboateng@gmail.com';
@@ -51,44 +60,79 @@ const BACKUP_EMAIL = 'brightpeterkwakuboateng@gmail.com';
 // ============================================
 // EMAIL TRANSPORTER SETUP
 // ============================================
-// ============================================
-// EMAIL TRANSPORTER SETUP (FIXED FOR RENDER)
-// ============================================
 let emailTransporter = null;
 
 if (EMAIL_USER && EMAIL_PASS) {
-  emailTransporter = nodemailer.createTransport({
-    service: 'gmail',
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Use SSL
-    auth: {
-      user: EMAIL_USER,
-      pass: EMAIL_PASS
-    },
-    tls: {
-      rejectUnauthorized: false
-    },
-    connectionTimeout: 10000,
-    socketTimeout: 10000
-  });
+  console.log('📧 Creating email transporter...');
+  
+  try {
+    emailTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS
+      },
+      tls: {
+        rejectUnauthorized: false
+      },
+      connectionTimeout: 10000,
+      socketTimeout: 10000,
+      debug: true, // Enable debug output
+      logger: true  // Enable logger
+    });
 
-  // Verify connection
-  emailTransporter.verify((error, success) => {
-    if (error) {
-      console.log('❌ Gmail SMTP connection failed:', error.message);
-      console.log('⚠️  Troubleshooting:');
-      console.log('   1. Verify EMAIL_USER and EMAIL_PASS are set in Render');
-      console.log('   2. EMAIL_PASS must be a 16-char App Password (not regular password)');
-      console.log('   3. Generate App Password at: https://myaccount.google.com/apppasswords');
-      console.log('   4. Enable 2FA on your Gmail account first');
-    } else {
-      console.log('✅ Email service connected successfully');
-      console.log(`📧 Sending from: ${EMAIL_USER}`);
-    }
-  });
+    console.log('📧 Email transporter created, verifying connection...');
+
+    // Verify connection
+    emailTransporter.verify((error, success) => {
+      if (error) {
+        console.log('\n❌ ============================================');
+        console.log('❌ GMAIL SMTP CONNECTION FAILED');
+        console.log('❌ ============================================');
+        console.log('❌ Error:', error.message);
+        console.log('❌ Error code:', error.code);
+        console.log('❌ Error command:', error.command);
+        console.log('\n⚠️  TROUBLESHOOTING STEPS:');
+        console.log('   1. Verify EMAIL_USER is correct Gmail address');
+        console.log('   2. Verify EMAIL_PASS is 16-char App Password (NOT regular password)');
+        console.log('   3. Generate App Password: https://myaccount.google.com/apppasswords');
+        console.log('   4. Ensure 2FA is enabled on Gmail account');
+        console.log('   5. Check for spaces in App Password (remove them)');
+        console.log('   6. Try regenerating a new App Password');
+        console.log('❌ ============================================\n');
+      } else {
+        console.log('\n✅ ============================================');
+        console.log('✅ EMAIL SERVICE CONNECTED SUCCESSFULLY');
+        console.log('✅ ============================================');
+        console.log(`✅ Sending from: ${EMAIL_USER}`);
+        console.log(`✅ Ready to send emails to: ${ADMIN_EMAIL}`);
+        console.log('✅ ============================================\n');
+      }
+    });
+  } catch (error) {
+    console.log('\n❌ ============================================');
+    console.log('❌ FAILED TO CREATE EMAIL TRANSPORTER');
+    console.log('❌ ============================================');
+    console.log('❌ Error:', error.message);
+    console.log('❌ ============================================\n');
+  }
 } else {
-  console.log('⚠️  Email service not configured - set EMAIL_USER and EMAIL_PASS in .env');
+  console.log('\n⚠️  ============================================');
+  console.log('⚠️  EMAIL SERVICE NOT CONFIGURED');
+  console.log('⚠️  ============================================');
+  console.log('⚠️  Missing environment variables:');
+  if (!EMAIL_USER) console.log('   ✗ EMAIL_USER is not set');
+  if (!EMAIL_PASS) console.log('   ✗ EMAIL_PASS is not set');
+  console.log('\n⚠️  TO FIX:');
+  console.log('   1. Go to Railway project settings');
+  console.log('   2. Click "Variables" tab');
+  console.log('   3. Add EMAIL_USER = your_gmail@gmail.com');
+  console.log('   4. Add EMAIL_PASS = your_16_char_app_password');
+  console.log('   5. Redeploy the service');
+  console.log('⚠️  ============================================\n');
 }
 // ============================================
 // IN-MEMORY DATABASES
