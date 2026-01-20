@@ -1,0 +1,13 @@
+## **Also Create: `.dockerignore`**
+
+This tells Docker what files to ignore (saves build time and size):
+```
+node_modules
+npm-debug.log
+.env
+.env.local
+.git
+.gitignore
+README.md
+*.md
+.DS_Store
