@@ -11,7 +11,11 @@ const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
-require('dotenv').config();
+// require('dotenv').config();
+// Load .env only in development (Railway doesn't use .env files)
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 const app = express();
 
