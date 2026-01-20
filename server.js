@@ -11,7 +11,7 @@ const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
-// require('dotenv').config();
+require('dotenv').config();
 
 const app = express();
 
@@ -37,9 +37,13 @@ const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Email Configuration
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+// Email Configuration
+const EMAIL_USER = process.env.EMAIL_USER?.trim();
+const EMAIL_PASS = process.env.EMAIL_PASS?.trim();
 
+console.log('📧 Email Config Check:');
+console.log(`   EMAIL_USER is ${EMAIL_USER ? 'SET ✓' : 'MISSING ✗'}`);
+console.log(`   EMAIL_PASS is ${EMAIL_PASS ? 'SET ✓' : 'MISSING ✗'}`);
 // Official YCKF Email Addresses
 const ADMIN_EMAIL = 'yckfadmin@youngcyberknightsfoundation.org';
 const BACKUP_EMAIL = 'brightpeterkwakuboateng@gmail.com';
