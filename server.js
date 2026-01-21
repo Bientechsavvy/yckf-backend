@@ -560,6 +560,142 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
   await emailTransporter.sendMail(mailOptions);
 }
 
+
+// ============================================
+// AUTO-EMAIL: BOOKING SUBMISSION
+// ============================================
+async function sendBookingSubmissionEmail(bookingData) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const mailOptions = {
+    from: `"YCKF Booking System" <${EMAIL_USER}>`,
+    to: [ADMIN_EMAIL, BACKUP_EMAIL],
+    replyTo: bookingData.phone ? `${bookingData.phone}` : undefined,
+    subject: `📅 New Booking Request - ${bookingData.specialist}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #1E40AF; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+          .section { margin-bottom: 20px; }
+          .section-title { font-size: 16px; font-weight: bold; color: #1E40AF; margin-bottom: 10px; border-bottom: 2px solid #1E40AF; padding-bottom: 5px; }
+          .info-row { margin-bottom: 8px; }
+          .info-label { font-weight: bold; color: #555; }
+          .case-box { background: white; padding: 15px; border-left: 4px solid #1E40AF; margin-top: 10px; white-space: pre-wrap; }
+          .payment-badge { display: inline-block; background: #D1FAE5; color: #065F46; padding: 8px 16px; border-radius: 20px; font-weight: bold; margin-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>📅 NEW BOOKING REQUEST</h1>
+            <p>YCKF Expert Service</p>
+          </div>
+          <div class="content">
+            <div class="section">
+              <div class="section-title">CLIENT INFORMATION</div>
+              <div class="info-row"><span class="info-label">Full Name:</span> ${bookingData.fullName}</div>
+              <div class="info-row"><span class="info-label">Phone Number:</span> ${bookingData.phone}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">APPOINTMENT DETAILS</div>
+              <div class="info-row"><span class="info-label">Specialist:</span> ${bookingData.specialist}</div>
+              <div class="info-row"><span class="info-label">Preferred Date:</span> ${bookingData.date}</div>
+              <div class="info-row"><span class="info-label">Preferred Time:</span> ${bookingData.time}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">CASE DESCRIPTION</div>
+              <div class="case-box">${bookingData.caseDescription}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">PAYMENT INFORMATION</div>
+              <div class="info-row"><span class="info-label">Payment Method:</span> ${bookingData.paymentMethod}</div>
+              <div class="info-row"><span class="info-label">Payment Reference:</span> ${bookingData.paymentReference}</div>
+              ${bookingData.paymentReference !== 'Pending' ? '<span class="payment-badge">✓ Payment Confirmed</span>' : '<span class="payment-badge" style="background: #FEE2E2; color: #991B1B;">⏳ Payment Pending</span>'}
+            </div>
+
+            <div class="section">
+              <div class="section-title">SUBMISSION INFO</div>
+              <div class="info-row"><span class="info-label">Submitted via:</span> YCKF Mobile App</div>
+              <div class="info-row"><span class="info-label">Timestamp:</span> ${new Date(bookingData.submittedAt).toLocaleString()}</div>
+            </div>
+
+            <div style="margin-top: 30px; padding: 15px; background: #EFF6FF; border-radius: 8px; text-align: center;">
+              <p style="margin: 0; font-weight: bold; color: #1E40AF;">⚡ NEXT STEPS</p>
+              <p style="margin: 10px 0 0 0; font-size: 14px;">
+                1. Review the case description<br>
+                2. Verify payment status<br>
+                3. Contact client at ${bookingData.phone} to confirm appointment
+              </p>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+
+// ENDPOINT: POST /email/booking-submission
+app.post('/email/booking-submission', emailLimiter, async (req, res) => {
+  try {
+    const bookingData = req.body;
+
+    // Validate required fields
+    if (!bookingData.fullName || !bookingData.phone || !bookingData.date || 
+        !bookingData.time || !bookingData.caseDescription || !bookingData.specialist) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required fields' 
+      });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'Email service not configured' 
+      });
+    }
+
+    console.log('📧 Sending booking submission email:', {
+      specialist: bookingData.specialist,
+      client: bookingData.fullName,
+      date: bookingData.date
+    });
+    
+    await sendBookingSubmissionEmail(bookingData);
+    
+    logAudit('BOOKING_SUBMISSION_SENT', bookingData.phone, null, { 
+      specialist: bookingData.specialist,
+      client: bookingData.fullName
+    });
+
+    res.json({
+      success: true,
+      message: 'Booking submitted successfully',
+      bookingReference: `YCKF-${Date.now()}`
+    });
+
+  } catch (error) {
+    console.error('Failed to send booking submission:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to send booking email' 
+    });
+  }
+});
+
 // ============================================
 // HEALTH CHECK
 // ============================================
