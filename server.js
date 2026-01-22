@@ -289,6 +289,109 @@ async function sendResetCodeEmail(email, code, userName) {
   await emailTransporter.sendMail(mailOptions);
 }
 
+// ==========================START=============================
+// ============================================
+// AUTO-EMAIL: ACCOUNT CREATION CONFIRMATION
+// ============================================
+async function sendAccountCreationEmail(userData) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const mailOptions = {
+    from: `"YCKF App" <${EMAIL_USER}>`,
+    to: userData.email,
+    subject: '🎉 Welcome to YCKF - Account Created Successfully!',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0066cc; color: white; padding: 30px 20px; text-align: center; border-radius: 5px 5px 0 0; }
+          .header h1 { margin: 0; font-size: 28px; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+          .welcome-box { background: white; padding: 20px; border-left: 4px solid #0066cc; margin: 20px 0; }
+          .info-box { background: #EFF6FF; padding: 15px; border-radius: 8px; margin: 20px 0; }
+          .info-box strong { color: #0066cc; }
+          .footer { margin-top: 30px; padding-top: 20px; border-top: 2px solid #ddd; text-align: center; color: #666; font-size: 12px; }
+          .button { display: inline-block; background: #0066cc; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🎉 Welcome to YCKF!</h1>
+            <p style="margin: 10px 0 0 0; font-size: 16px;">Your Account Has Been Created Successfully</p>
+          </div>
+          <div class="content">
+            <div class="welcome-box">
+              <h2 style="margin-top: 0; color: #0066cc;">Hello ${userData.name}!</h2>
+              <p>Thank you for joining the <strong>Young Cyber Knights Foundation (YCKF)</strong> community. Your account has been created successfully and is now active!</p>
+            </div>
+
+            <div class="info-box">
+              <strong>📧 Your Account Details:</strong><br>
+              <strong>Name:</strong> ${userData.name}<br>
+              <strong>Email:</strong> ${userData.email}<br>
+              <strong>Account Type:</strong> ${userData.role === 'admin' ? 'Administrator' : 'User'}<br>
+              <strong>Created On:</strong> ${new Date().toLocaleString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric',
+                hour: 'numeric',
+                minute: 'numeric',
+                hour12: true
+              })}
+            </div>
+
+            <h3 style="color: #0066cc;">🚀 What's Next?</h3>
+            <ul style="line-height: 2;">
+              <li>✅ Login to the YCKF Mobile App with your credentials</li>
+              <li>🔒 Enable premium features by subscribing or using coupon codes</li>
+              <li>📚 Explore cybersecurity resources and educational content</li>
+              <li>🛡️ Activate thief detection and device protection features</li>
+              <li>📞 Book sessions with our cybersecurity experts</li>
+            </ul>
+
+            <div style="text-align: center;">
+              <a href="yckf://login" class="button">Open YCKF App</a>
+            </div>
+
+            <div style="background: #FEF3C7; padding: 15px; border-radius: 8px; margin-top: 20px;">
+              <strong style="color: #92400E;">🔐 Security Tip:</strong>
+              <p style="margin: 10px 0 0 0; color: #92400E;">
+                Keep your password secure and never share it with anyone. 
+                If you didn't create this account, please contact us immediately at ${ADMIN_EMAIL}
+              </p>
+            </div>
+
+            <div class="footer">
+              <p><strong>Young Cyber Knights Foundation</strong></p>
+              <p>Empowering the next generation of cybersecurity professionals</p>
+              <p>
+                Need help? Contact us at <a href="mailto:${ADMIN_EMAIL}" style="color: #0066cc;">${ADMIN_EMAIL}</a><br>
+                Visit our website: <a href="https://youngcyberknightsfoundation.org" style="color: #0066cc;">youngcyberknightsfoundation.org</a>
+              </p>
+              <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+              <p style="font-size: 11px; color: #999;">
+                This is an automated email from the YCKF Mobile App. Please do not reply to this email.
+              </p>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+// ==========================ENDING============================
+
+
 // ============================================
 // AUTO-EMAIL: CYBERCRIME REPORT
 // ============================================
@@ -560,7 +663,6 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
   await emailTransporter.sendMail(mailOptions);
 }
 
-
 // ============================================
 // AUTO-EMAIL: BOOKING SUBMISSION
 // ============================================
@@ -737,11 +839,36 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'User already exists' });
     }
 
+    // ============================================
+    // NEW: VALIDATE PASSWORD DOESN'T CONTAIN NAME
+    // ============================================
+    const userName = name || email.split('@')[0];
+    const passwordLower = password.toLowerCase();
+    
+    // Split name into parts (first name, last name, etc.)
+    const nameParts = userName.toLowerCase().split(' ').filter(part => part.length > 2);
+    
+    // Check if any name part is in the password
+    const nameInPassword = nameParts.some(part => passwordLower.includes(part));
+    
+    if (nameInPassword) {
+      return res.status(400).json({ 
+        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.' 
+      });
+    }
+
+    // Check password length
+    if (password.length < 8) {
+      return res.status(400).json({ 
+        error: 'Password must be at least 8 characters long' 
+      });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const newUser = {
-          id: uuidv4(),
+      id: uuidv4(),
       email: email.toLowerCase(),
-      name: name || email.split('@')[0],
+      name: userName,
       passwordHash,
       role: 'user',
       createdAt: new Date().toISOString(),
@@ -749,6 +876,24 @@ app.post('/auth/register', async (req, res) => {
 
     users.push(newUser);
     logAudit('USER_REGISTERED', newUser.id, newUser.id, { email: newUser.email });
+
+    // ============================================
+    // NEW: SEND ACCOUNT CREATION CONFIRMATION EMAIL
+    // ============================================
+    if (emailTransporter) {
+      try {
+        await sendAccountCreationEmail({
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role
+        });
+        console.log(`✅ Account creation email sent to: ${newUser.email}`);
+        logAudit('ACCOUNT_CREATION_EMAIL_SENT', newUser.id, newUser.id, { email: newUser.email });
+      } catch (emailError) {
+        console.error('Failed to send account creation email:', emailError);
+        // Don't fail registration if email fails - just log it
+      }
+    }
 
     const token = jwt.sign(
       { id: newUser.id, email: newUser.email, role: newUser.role },
@@ -771,6 +916,8 @@ app.post('/auth/register', async (req, res) => {
     res.status(500).json({ error: 'Registration failed' });
   }
 });
+
+
 
 app.post('/auth/login', authLimiter, async (req, res) => {
   try {
@@ -935,9 +1082,9 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    if (newPassword.length < 8) {
       return res.status(400).json({ 
-        error: 'Password must be at least 6 characters long' 
+        error: 'Password must be at least 8 characters long' 
       });
     }
 
@@ -959,6 +1106,34 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // ============================================
+    // NEW: VALIDATE PASSWORD DOESN'T CONTAIN NAME
+    // ============================================
+    const passwordLower = newPassword.toLowerCase();
+    
+    // Split name into parts (first name, last name, etc.)
+    const nameParts = user.name.toLowerCase().split(' ').filter(part => part.length > 2);
+    
+    // Check if any name part is in the password
+    const nameInPassword = nameParts.some(part => passwordLower.includes(part));
+    
+    if (nameInPassword) {
+      return res.status(400).json({ 
+        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.' 
+      });
+    }
+
+    // ============================================
+    // NEW: VALIDATE PASSWORD IS DIFFERENT FROM OLD PASSWORD
+    // ============================================
+    const isSamePassword = await bcrypt.compare(newPassword, user.passwordHash);
+    
+    if (isSamePassword) {
+      return res.status(400).json({ 
+        error: 'New password cannot be the same as your old password. Please choose a different password.' 
+      });
+    }
+
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     resetCode.used = true;
 
@@ -973,7 +1148,6 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
     res.status(500).json({ error: 'Failed to reset password' });
   }
 });
-
 // ============================================
 // AUTO-EMAIL ENDPOINTS
 // ============================================
