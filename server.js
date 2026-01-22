@@ -663,6 +663,90 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
   await emailTransporter.sendMail(mailOptions);
 }
 
+
+// ============================================
+// AUTO-EMAIL: EMERGENCY REPORT
+// ============================================
+async function sendEmergencyReportEmail(reportData) {
+  if (!emailTransporter) {
+    throw new Error('Email service not configured');
+  }
+
+  const mailOptions = {
+    from: `"YCKF Emergency Alert" <${EMAIL_USER}>`,
+    to: [ADMIN_EMAIL, BACKUP_EMAIL],
+    subject: `🚨 EMERGENCY REPORT - ${reportData.emergencyId}`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 700px; margin: 0 auto; padding: 20px; }
+          .header { background: #dc2626; color: white; padding: 25px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+          .section { margin-bottom: 25px; }
+          .section-title { font-size: 18px; font-weight: bold; color: #dc2626; margin-bottom: 10px; border-bottom: 2px solid #dc2626; padding-bottom: 5px; }
+          .info-row { margin-bottom: 8px; }
+          .info-label { font-weight: bold; min-width: 150px; display: inline-block; color: #555; }
+          .message-box { background: white; padding: 15px; border-left: 4px solid #dc2626; margin-top: 10px; white-space: pre-wrap; }
+          .map-link { display: inline-block; background: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🚨 EMERGENCY REPORT</h1>
+            <p style="margin: 0; font-size: 14px;">ID: ${reportData.emergencyId}</p>
+          </div>
+          <div class="content">
+            <div class="section">
+              <div class="section-title">📍 LOCATION INFORMATION</div>
+              ${reportData.location ? `
+                <div class="info-row"><span class="info-label">Coordinates:</span> ${reportData.location.latitude.toFixed(6)}, ${reportData.location.longitude.toFixed(6)}</div>
+                ${reportData.location.accuracy ? `<div class="info-row"><span class="info-label">Accuracy:</span> ±${Math.round(reportData.location.accuracy)} meters</div>` : ''}
+                <a href="https://maps.google.com/?q=${reportData.location.latitude},${reportData.location.longitude}" class="map-link">📍 View on Google Maps</a>
+              ` : '<p>Location not available</p>'}
+            </div>
+
+            ${reportData.stationInfo ? `
+            <div class="section">
+              <div class="section-title">🚔 NEAREST POLICE STATION</div>
+              <div class="info-row"><span class="info-label">Station:</span> ${reportData.stationInfo.name}</div>
+              <div class="info-row"><span class="info-label">Distance:</span> ${reportData.stationInfo.distance.toFixed(2)} km</div>
+              <div class="info-row"><span class="info-label">Phone:</span> ${reportData.stationInfo.phone}</div>
+              <div class="info-row"><span class="info-label">Address:</span> ${reportData.stationInfo.address}</div>
+            </div>
+            ` : ''}
+
+            <div class="section">
+              <div class="section-title">📋 EMERGENCY DETAILS</div>
+              <div class="info-row"><span class="info-label">Report Type:</span> ${reportData.reportType === 'voice' ? 'Voice Recording' : 'Text Message'}</div>
+              ${reportData.hasAudio ? `<div class="info-row"><span class="info-label">Audio Duration:</span> ${reportData.audioDuration}</div>` : ''}
+              ${reportData.textMessages ? `
+                <div class="message-box">
+                  <strong>Messages:</strong><br>
+                  ${reportData.textMessages.map((msg, i) => `${i + 1}. ${msg}`).join('<br>')}
+                </div>
+              ` : ''}
+              <div class="message-box">${reportData.message}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">⏰ TIMESTAMP</div>
+              <div class="info-row"><span class="info-label">Reported At:</span> ${new Date(reportData.timestamp).toLocaleString()}</div>
+              <div class="info-row"><span class="info-label">Submitted Via:</span> YCKF Mobile App</div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+}
+
 // ============================================
 // AUTO-EMAIL: BOOKING SUBMISSION
 // ============================================
@@ -748,6 +832,51 @@ async function sendBookingSubmissionEmail(bookingData) {
 
   await emailTransporter.sendMail(mailOptions);
 }
+
+// ============================================
+// ENDPOINT: POST /email/emergency-report
+// ============================================
+app.post('/email/emergency-report', emailLimiter, async (req, res) => {
+  try {
+    const reportData = req.body;
+
+    // Validate required fields
+    if (!reportData.emergencyId || !reportData.subject || !reportData.message) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required fields (emergencyId, subject, message)' 
+      });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({ 
+        success: false,
+        error: 'Email service not configured' 
+      });
+    }
+
+    console.log('🚨 Sending emergency report email:', reportData.emergencyId);
+    
+    await sendEmergencyReportEmail(reportData);
+    
+    logAudit('EMERGENCY_REPORT_EMAIL_SENT', reportData.emergencyId, null, { 
+      reportType: reportData.reportType
+    });
+
+    res.json({
+      success: true,
+      message: 'Emergency report sent successfully',
+      emergencyId: reportData.emergencyId
+    });
+
+  } catch (error) {
+    console.error('Failed to send emergency report:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to send emergency report email' 
+    });
+  }
+});
 
 // ENDPOINT: POST /email/booking-submission
 app.post('/email/booking-submission', emailLimiter, async (req, res) => {
