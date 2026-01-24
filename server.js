@@ -11,9 +11,23 @@ const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const { Pool } = require('pg'); // ⭐ NEW LINE
 require('dotenv').config();
 
 const app = express();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+//Test connection
+pool.on('connect', () => {
+  console.log('✅ PostgreSQL connected');
+});
+
+pool.on('error', (err) => {
+  console.error('❌ Database error:', err);
+});
 
 // ============================================
 // TRUST PROXY (Required for Render/Cloud deployment)
@@ -23,7 +37,7 @@ app.set('trust proxy', 1); // Trust first proxy (Render's load balancer)
 // ============================================
 // MIDDLEWARE
 // ============================================
-app.use(express.json({ limit: '50mb' })); 
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
@@ -64,7 +78,7 @@ let emailTransporter = null;
 
 if (EMAIL_USER && EMAIL_PASS) {
   console.log('📧 Creating email transporter...');
-  
+
   try {
     emailTransporter = nodemailer.createTransport({
       service: 'gmail',
@@ -134,35 +148,135 @@ if (EMAIL_USER && EMAIL_PASS) {
   console.log('   5. Redeploy the service');
   console.log('⚠️  ============================================\n');
 }
+
 // ============================================
-// IN-MEMORY DATABASES
+// DATABASE INITIALIZATION
 // ============================================
-const users = [
-  {
-    id: 'user-1',
-    email: 'admin@yckf.org',
-    name: 'YCKF Admin',
-    passwordHash: bcrypt.hashSync('SecureAdmin@2024', 10),
-    role: 'admin',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'user-2',
-    email: 'user@yckf.org',
-    name: 'Test User',
-    passwordHash: bcrypt.hashSync('TestUser@2024', 10),
-    role: 'user',
-    createdAt: new Date().toISOString(),
+async function initializeDatabase() {
+  try {
+    console.log('🔄 Initializing database...');
+
+    // Create users table with UNIQUE email constraint
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        password_hash TEXT NOT NULL,
+        role VARCHAR(50) DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create index on email for faster lookups
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(LOWER(email))
+    `);
+
+    // Create subscriptions table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        is_active BOOLEAN DEFAULT true,
+        activated_at TIMESTAMP NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        payment_reference VARCHAR(255),
+        payment_method VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create coupons table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS coupons (
+        id VARCHAR(255) PRIMARY KEY,
+        code VARCHAR(100) UNIQUE NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        description TEXT,
+        expires_at TIMESTAMP,
+        max_redemptions INTEGER,
+        current_redemptions INTEGER DEFAULT 0,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create reset_codes table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reset_codes (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        code VARCHAR(10) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create audit_logs table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        action VARCHAR(255) NOT NULL,
+        performed_by VARCHAR(255),
+        target_user VARCHAR(255),
+        details JSONB
+      )
+    `);
+    console.log('✅ Database tables created');
+
+    // Inside initializeDatabase() function, after creating users table
+
+// Create coupon_redemptions table
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS coupon_redemptions (
+    id VARCHAR(255) PRIMARY KEY,
+    coupon_code VARCHAR(100) NOT NULL,
+    user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+    redeemed_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    access_duration INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Create demo_sessions table
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS demo_sessions (
+    id VARCHAR(255) PRIMARY KEY,
+    user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    device_id VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+console.log('✅ Coupon redemptions and demo sessions tables ready');
+
+    // Create default admin if doesn't exist
+    const adminCheck = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+      ['admin@yckf.org']
+    );
+
+    if (adminCheck.rows.length === 0) {
+      const adminHash = await bcrypt.hash('SecureAdmin@2024', 10);
+      await pool.query(
+        'INSERT INTO users (id, email, name, password_hash, role) VALUES ($1, $2, $3, $4, $5)',
+        [uuidv4(), 'admin@yckf.org', 'YCKF Admin', adminHash, 'admin']
+      );
+      console.log('✅ Default admin created');
+    }
+
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error);
+    throw error;
   }
-];
-
-const subscriptions = [];
-const coupons = [];
-const couponRedemptions = [];
-const demoSessions = [];
-const auditLogs = [];
-const resetCodes = [];
-
+}
 let currentDemoToken = bcrypt.hashSync('DEMO-YCKF-2024', 10);
 
 // ============================================
@@ -214,8 +328,8 @@ function authenticateToken(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') {
-    logAudit('UNAUTHORIZED_ADMIN_ACCESS_ATTEMPT', req.user.id, null, { 
-      endpoint: req.path 
+    logAudit('UNAUTHORIZED_ADMIN_ACCESS_ATTEMPT', req.user.id, null, {
+      endpoint: req.path
     });
     return res.status(403).json({ error: 'Admin access required' });
   }
@@ -225,15 +339,16 @@ function requireAdmin(req, res, next) {
 // ============================================
 // AUDIT LOGGING
 // ============================================
-function logAudit(action, performedBy, targetUser, details) {
-  auditLogs.push({
-    timestamp: new Date().toISOString(),
-    action,
-    performedBy,
-    targetUser,
-    details
-  });
-  console.log(`[AUDIT] ${action} by ${performedBy}`, details);
+async function logAudit(action, performedBy, targetUser, details) {
+  try {
+    await pool.query(
+      'INSERT INTO audit_logs (action, performed_by, target_user, details) VALUES ($1, $2, $3, $4)',
+      [action, performedBy, targetUser, JSON.stringify(details)]
+    );
+    console.log(`[AUDIT] ${action} by ${performedBy}`, details);
+  } catch (error) {
+    console.error('Audit log failed:', error);
+  }
 }
 
 // ============================================
@@ -336,15 +451,15 @@ async function sendAccountCreationEmail(userData) {
               <strong>Name:</strong> ${userData.name}<br>
               <strong>Email:</strong> ${userData.email}<br>
               <strong>Account Type:</strong> ${userData.role === 'admin' ? 'Administrator' : 'User'}<br>
-              <strong>Created On:</strong> ${new Date().toLocaleString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric',
-                hour: 'numeric',
-                minute: 'numeric',
-                hour12: true
-              })}
+              <strong>Created On:</strong> ${new Date().toLocaleString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true
+    })}
             </div>
 
             <h3 style="color: #0066cc;">🚀 What's Next?</h3>
@@ -472,10 +587,10 @@ async function sendCybercrimeReportEmail(reportData) {
     `,
     attachments: reportData.evidencePhotos && reportData.evidencePhotos.length > 0
       ? reportData.evidencePhotos.map((photo, index) => ({
-          filename: `evidence_${index + 1}.jpg`,
-          content: photo.split('base64,')[1] || photo,
-          encoding: 'base64'
-        }))
+        filename: `evidence_${index + 1}.jpg`,
+        content: photo.split('base64,')[1] || photo,
+        encoding: 'base64'
+      }))
       : []
   };
 
@@ -842,24 +957,24 @@ app.post('/email/emergency-report', emailLimiter, async (req, res) => {
 
     // Validate required fields
     if (!reportData.emergencyId || !reportData.subject || !reportData.message) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Missing required fields (emergencyId, subject, message)' 
+        error: 'Missing required fields (emergencyId, subject, message)'
       });
     }
 
     if (!emailTransporter) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         success: false,
-        error: 'Email service not configured' 
+        error: 'Email service not configured'
       });
     }
 
     console.log('🚨 Sending emergency report email:', reportData.emergencyId);
-    
+
     await sendEmergencyReportEmail(reportData);
-    
-    logAudit('EMERGENCY_REPORT_EMAIL_SENT', reportData.emergencyId, null, { 
+
+    logAudit('EMERGENCY_REPORT_EMAIL_SENT', reportData.emergencyId, null, {
       reportType: reportData.reportType
     });
 
@@ -871,9 +986,9 @@ app.post('/email/emergency-report', emailLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('Failed to send emergency report:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to send emergency report email' 
+      error: 'Failed to send emergency report email'
     });
   }
 });
@@ -884,18 +999,18 @@ app.post('/email/booking-submission', emailLimiter, async (req, res) => {
     const bookingData = req.body;
 
     // Validate required fields
-    if (!bookingData.fullName || !bookingData.phone || !bookingData.date || 
-        !bookingData.time || !bookingData.caseDescription || !bookingData.specialist) {
-      return res.status(400).json({ 
+    if (!bookingData.fullName || !bookingData.phone || !bookingData.date ||
+      !bookingData.time || !bookingData.caseDescription || !bookingData.specialist) {
+      return res.status(400).json({
         success: false,
-        error: 'Missing required fields' 
+        error: 'Missing required fields'
       });
     }
 
     if (!emailTransporter) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         success: false,
-        error: 'Email service not configured' 
+        error: 'Email service not configured'
       });
     }
 
@@ -904,10 +1019,10 @@ app.post('/email/booking-submission', emailLimiter, async (req, res) => {
       client: bookingData.fullName,
       date: bookingData.date
     });
-    
+
     await sendBookingSubmissionEmail(bookingData);
-    
-    logAudit('BOOKING_SUBMISSION_SENT', bookingData.phone, null, { 
+
+    logAudit('BOOKING_SUBMISSION_SENT', bookingData.phone, null, {
       specialist: bookingData.specialist,
       client: bookingData.fullName
     });
@@ -920,9 +1035,9 @@ app.post('/email/booking-submission', emailLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('Failed to send booking submission:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to send booking email' 
+      error: 'Failed to send booking email'
     });
   }
 });
@@ -963,69 +1078,67 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email format' });
     }
 
-    const existingUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (existingUser) {
-      return res.status(400).json({ error: 'User already exists' });
+    // ⭐ FIX: Check database for existing user (case-insensitive)
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+      [normalizedEmail]
+    );
+
+    if (existingUser.rows.length > 0) {
+      console.log(`❌ Registration blocked - Email exists: ${normalizedEmail}`);
+      return res.status(400).json({
+        error: 'An account with this email already exists. Please login instead.'
+      });
     }
 
-    // ============================================
-    // NEW: VALIDATE PASSWORD DOESN'T CONTAIN NAME
-    // ============================================
+    // Validate password
     const userName = name || email.split('@')[0];
     const passwordLower = password.toLowerCase();
-    
-    // Split name into parts (first name, last name, etc.)
     const nameParts = userName.toLowerCase().split(' ').filter(part => part.length > 2);
-    
-    // Check if any name part is in the password
     const nameInPassword = nameParts.some(part => passwordLower.includes(part));
-    
+
     if (nameInPassword) {
-      return res.status(400).json({ 
-        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.' 
+      return res.status(400).json({
+        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.'
       });
     }
 
-    // Check password length
     if (password.length < 8) {
-      return res.status(400).json({ 
-        error: 'Password must be at least 8 characters long' 
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters long'
       });
     }
 
+    // ⭐ FIX: Insert into database
     const passwordHash = await bcrypt.hash(password, 10);
-    const newUser = {
-      id: uuidv4(),
-      email: email.toLowerCase(),
-      name: userName,
-      passwordHash,
-      role: 'user',
-      createdAt: new Date().toISOString(),
-    };
+    const userId = uuidv4();
 
-    users.push(newUser);
-    logAudit('USER_REGISTERED', newUser.id, newUser.id, { email: newUser.email });
+    await pool.query(
+      'INSERT INTO users (id, email, name, password_hash, role) VALUES ($1, $2, $3, $4, $5)',
+      [userId, normalizedEmail, userName, passwordHash, 'user']
+    );
 
-    // ============================================
-    // NEW: SEND ACCOUNT CREATION CONFIRMATION EMAIL
-    // ============================================
+    console.log(`✅ User registered: ${normalizedEmail} (ID: ${userId})`);
+    await logAudit('USER_REGISTERED', userId, userId, { email: normalizedEmail });
+
+    // Send account creation email
     if (emailTransporter) {
       try {
         await sendAccountCreationEmail({
-          name: newUser.name,
-          email: newUser.email,
-          role: newUser.role
+          name: userName,
+          email: normalizedEmail,
+          role: 'user'
         });
-        console.log(`✅ Account creation email sent to: ${newUser.email}`);
-        logAudit('ACCOUNT_CREATION_EMAIL_SENT', newUser.id, newUser.id, { email: newUser.email });
+        console.log(`✅ Welcome email sent to: ${normalizedEmail}`);
+        await logAudit('ACCOUNT_CREATION_EMAIL_SENT', userId, userId, { email: normalizedEmail });
       } catch (emailError) {
-        console.error('Failed to send account creation email:', emailError);
-        // Don't fail registration if email fails - just log it
+        console.error('Email failed:', emailError);
       }
     }
 
     const token = jwt.sign(
-      { id: newUser.id, email: newUser.email, role: newUser.role },
+      { id: userId, email: normalizedEmail, role: 'user' },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -1034,10 +1147,10 @@ app.post('/auth/register', async (req, res) => {
       success: true,
       token,
       user: {
-        id: newUser.id,
-        email: newUser.email,
-        name: newUser.name,
-        role: newUser.role
+        id: userId,
+        email: normalizedEmail,
+        name: userName,
+        role: 'user'
       }
     });
   } catch (error) {
@@ -1045,8 +1158,6 @@ app.post('/auth/register', async (req, res) => {
     res.status(500).json({ error: 'Registration failed' });
   }
 });
-
-
 
 app.post('/auth/login', authLimiter, async (req, res) => {
   try {
@@ -1056,18 +1167,27 @@ app.post('/auth/login', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
+    // ⭐ FIX: Query database (case-insensitive)
+    const normalizedEmail = email.toLowerCase().trim();
+    const result = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+      [normalizedEmail]
+    );
+
+    if (result.rows.length === 0) {
+      console.log(`❌ Login failed - User not found: ${normalizedEmail}`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    const user = result.rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+
     if (!validPassword) {
-      logAudit('FAILED_LOGIN_ATTEMPT', email, user.id, { email });
+      await logAudit('FAILED_LOGIN_ATTEMPT', normalizedEmail, user.id, { email: normalizedEmail });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    logAudit('USER_LOGIN', user.id, user.id, { email });
+    await logAudit('USER_LOGIN', user.id, user.id, { email: normalizedEmail });
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
@@ -1091,23 +1211,36 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   }
 });
 
+
 app.post('/auth/logout', authenticateToken, (req, res) => {
   logAudit('USER_LOGOUT', req.user.id, req.user.id, {});
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-app.get('/auth/me', authenticateToken, (req, res) => {
-  const user = users.find(u => u.id === req.user.id);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
+app.get('/auth/me', authenticateToken, async (req, res) => {
+  try {
+    // ⭐ FIX: Query from database
+    const result = await pool.query(
+      'SELECT * FROM users WHERE id = $1',
+      [req.user.id]
+    );
 
-  res.json({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role
-  });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = result.rows[0];
+
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ error: 'Failed to get user' });
+  }
 });
 
 // ============================================
@@ -1122,44 +1255,46 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
     }
 
     if (!emailTransporter) {
-      return res.status(503).json({ 
-        error: 'Email service is not configured. Please contact support.' 
+      return res.status(503).json({
+        error: 'Email service is not configured. Please contact support.'
       });
     }
 
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    
+    // ⭐ FIX: Query database
+    const normalizedEmail = email.toLowerCase().trim();
+    const result = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+      [normalizedEmail]
+    );
+    const user = result.rows.length > 0 ? result.rows[0] : null;
     if (!user) {
       console.log(`Password reset requested for non-existent email: ${email}`);
-      return res.json({ 
-        success: true, 
-        message: 'If an account exists with this email, a reset code has been sent.' 
+      return res.json({
+        success: true,
+        message: 'If an account exists with this email, a reset code has been sent.'
       });
     }
 
     const code = generateResetCode();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    resetCodes.push({
-      email: email.toLowerCase(),
-      code,
-      expiresAt,
-      used: false,
-      createdAt: new Date().toISOString()
-    });
-
+    // ⭐ FIX: Save to database
+    await pool.query(
+      'INSERT INTO reset_codes (email, code, expires_at, used) VALUES ($1, $2, $3, $4)',
+      [normalizedEmail, code, expiresAt, false]
+    );
     try {
       await sendResetCodeEmail(email, code, user.name);
       logAudit('PASSWORD_RESET_REQUESTED', user.id, user.id, { email });
-      
+
       res.json({
         success: true,
         message: 'Password reset code has been sent to your email.'
       });
     } catch (emailError) {
       console.error('Failed to send reset email:', emailError);
-      return res.status(500).json({ 
-        error: 'Failed to send reset code. Please try again later.' 
+      return res.status(500).json({
+        error: 'Failed to send reset code. Please try again later.'
       });
     }
   } catch (error) {
@@ -1168,24 +1303,29 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
   }
 });
 
-app.post('/auth/verify-reset-code', resetPasswordLimiter, (req, res) => {
-  try {
+app.post('/auth/verify-reset-code', resetPasswordLimiter, async (req, res) => {  try {
     const { email, code } = req.body;
 
     if (!email || !code) {
       return res.status(400).json({ error: 'Email and code are required' });
     }
 
-    const resetCode = resetCodes.find(
-      rc => rc.email.toLowerCase() === email.toLowerCase() && 
-            rc.code === code &&
-            !rc.used &&
-            new Date(rc.expiresAt) > new Date()
-    );
-
+    // ⭐ FIX: Query database
+const normalizedEmail = email.toLowerCase().trim();
+const result = await pool.query(
+  `SELECT * FROM reset_codes 
+   WHERE LOWER(email) = LOWER($1) 
+   AND code = $2 
+   AND used = false 
+   AND expires_at > NOW()
+   ORDER BY created_at DESC
+   LIMIT 1`,
+  [normalizedEmail, code]
+);
+const resetCode = result.rows.length > 0 ? result.rows[0] : null;
     if (!resetCode) {
-      return res.status(400).json({ 
-        error: 'Invalid or expired reset code' 
+      return res.status(400).json({
+        error: 'Invalid or expired reset code'
       });
     }
 
@@ -1206,32 +1346,42 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
     const { email, code, newPassword } = req.body;
 
     if (!email || !code || !newPassword) {
-      return res.status(400).json({ 
-        error: 'Email, code, and new password are required' 
+      return res.status(400).json({
+        error: 'Email, code, and new password are required'
       });
     }
 
     if (newPassword.length < 8) {
-      return res.status(400).json({ 
-        error: 'Password must be at least 8 characters long' 
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters long'
       });
     }
 
-    const resetCode = resetCodes.find(
-      rc => rc.email.toLowerCase() === email.toLowerCase() && 
-            rc.code === code &&
-            !rc.used &&
-            new Date(rc.expiresAt) > new Date()
-    );
-
+    // ⭐ FIX: Query database
+const normalizedEmail = email.toLowerCase().trim();
+const result = await pool.query(
+  `SELECT * FROM reset_codes 
+   WHERE LOWER(email) = LOWER($1) 
+   AND code = $2 
+   AND used = false 
+   AND expires_at > NOW()
+   ORDER BY created_at DESC
+   LIMIT 1`,
+  [normalizedEmail, code]
+);
+const resetCode = result.rows.length > 0 ? result.rows[0] : null;
     if (!resetCode) {
-      return res.status(400).json({ 
-        error: 'Invalid or expired reset code' 
+      return res.status(400).json({
+        error: 'Invalid or expired reset code'
       });
     }
 
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
+// ⭐ FIX: Get user from database
+const userResult = await pool.query(
+  'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+  [normalizedEmail]
+);
+const user = userResult.rows.length > 0 ? userResult.rows[0] : null;    if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -1239,16 +1389,16 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
     // NEW: VALIDATE PASSWORD DOESN'T CONTAIN NAME
     // ============================================
     const passwordLower = newPassword.toLowerCase();
-    
+
     // Split name into parts (first name, last name, etc.)
     const nameParts = user.name.toLowerCase().split(' ').filter(part => part.length > 2);
-    
+
     // Check if any name part is in the password
     const nameInPassword = nameParts.some(part => passwordLower.includes(part));
-    
+
     if (nameInPassword) {
-      return res.status(400).json({ 
-        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.' 
+      return res.status(400).json({
+        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.'
       });
     }
 
@@ -1256,15 +1406,25 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
     // NEW: VALIDATE PASSWORD IS DIFFERENT FROM OLD PASSWORD
     // ============================================
     const isSamePassword = await bcrypt.compare(newPassword, user.passwordHash);
-    
+
     if (isSamePassword) {
-      return res.status(400).json({ 
-        error: 'New password cannot be the same as your old password. Please choose a different password.' 
+      return res.status(400).json({
+        error: 'New password cannot be the same as your old password. Please choose a different password.'
       });
     }
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
-    resetCode.used = true;
+    // ⭐ FIX: Update password in database
+const newPasswordHash = await bcrypt.hash(newPassword, 10);
+await pool.query(
+  'UPDATE users SET password_hash = $1 WHERE id = $2',
+  [newPasswordHash, user.id]
+);
+
+// Mark reset code as used
+await pool.query(
+  'UPDATE reset_codes SET used = true WHERE id = $1',
+  [resetCode.id]
+);
 
     logAudit('PASSWORD_RESET_COMPLETED', user.id, user.id, { email });
 
@@ -1287,16 +1447,16 @@ app.post('/email/cybercrime-report', authenticateToken, emailLimiter, async (req
     const reportData = req.body;
 
     if (!reportData.caseId || !reportData.fullName || !reportData.email) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Missing required fields (caseId, fullName, email)' 
+        error: 'Missing required fields (caseId, fullName, email)'
       });
     }
 
     if (!emailTransporter) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         success: false,
-        error: 'Email service not configured' 
+        error: 'Email service not configured'
       });
     }
 
@@ -1304,11 +1464,11 @@ app.post('/email/cybercrime-report', authenticateToken, emailLimiter, async (req
     reportData.userId = req.user.id;
 
     console.log('��� Sending cybercrime report email:', reportData.caseId);
-    
+
     await sendCybercrimeReportEmail(reportData);
-    
-    logAudit('CYBERCRIME_REPORT_SENT', req.user.id, null, { 
-      caseId: reportData.caseId 
+
+    logAudit('CYBERCRIME_REPORT_SENT', req.user.id, null, {
+      caseId: reportData.caseId
     });
 
     res.json({
@@ -1318,9 +1478,9 @@ app.post('/email/cybercrime-report', authenticateToken, emailLimiter, async (req
 
   } catch (error) {
     console.error('Failed to send cybercrime report:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to send cybercrime report email' 
+      error: 'Failed to send cybercrime report email'
     });
   }
 });
@@ -1331,25 +1491,25 @@ app.post('/email/contact-message', emailLimiter, async (req, res) => {
     const contactData = req.body;
 
     if (!contactData.name || !contactData.email || !contactData.message) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Missing required fields (name, email, message)' 
+        error: 'Missing required fields (name, email, message)'
       });
     }
 
     if (!emailTransporter) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         success: false,
-        error: 'Email service not configured' 
+        error: 'Email service not configured'
       });
     }
 
     console.log('��� Sending contact message from:', contactData.email);
-    
+
     await sendContactMessageEmail(contactData);
-    
-    logAudit('CONTACT_MESSAGE_SENT', contactData.email, null, { 
-      name: contactData.name 
+
+    logAudit('CONTACT_MESSAGE_SENT', contactData.email, null, {
+      name: contactData.name
     });
 
     res.json({
@@ -1359,9 +1519,9 @@ app.post('/email/contact-message', emailLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('Failed to send contact message:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to send contact message email' 
+      error: 'Failed to send contact message email'
     });
   }
 });
@@ -1372,25 +1532,25 @@ app.post('/email/thief-detection', emailLimiter, async (req, res) => {
     const evidenceData = req.body;
 
     if (!evidenceData.evidenceId || !evidenceData.location) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Missing required fields (evidenceId, location)' 
+        error: 'Missing required fields (evidenceId, location)'
       });
     }
 
     if (!emailTransporter) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         success: false,
-        error: 'Email service not configured' 
+        error: 'Email service not configured'
       });
     }
 
     console.log('��� SECURITY ALERT - Sending thief detection evidence:', evidenceData.evidenceId);
-    
+
     await sendThiefDetectionEvidenceEmail(evidenceData);
-    
-    logAudit('THIEF_DETECTION_ALERT_SENT', 'SYSTEM', null, { 
-      evidenceId: evidenceData.evidenceId 
+
+    logAudit('THIEF_DETECTION_ALERT_SENT', 'SYSTEM', null, {
+      evidenceId: evidenceData.evidenceId
     });
 
     res.json({
@@ -1400,9 +1560,9 @@ app.post('/email/thief-detection', emailLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('Failed to send thief detection evidence:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to send thief detection evidence email' 
+      error: 'Failed to send thief detection evidence email'
     });
   }
 });
@@ -1411,83 +1571,123 @@ app.post('/email/thief-detection', emailLimiter, async (req, res) => {
 // REMAINING ENDPOINTS (No Changes)
 // ============================================
 
-app.get('/entitlements', authenticateToken, (req, res) => {
-  const userId = req.user.id;
-  const user = users.find(u => u.id === userId);
+app.get('/entitlements', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
 
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
+    // ⭐ FIX: Get user from database
+    const userResult = await pool.query(
+      'SELECT * FROM users WHERE id = $1',
+      [userId]
+    );
 
-  if (user.role === 'admin') {
-    return res.json({
-      premium: true,
-      reason: 'admin',
-      adminRole: true,
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Check if user is admin
+    if (user.role === 'admin') {
+      return res.json({
+        premium: true,
+        reason: 'admin',
+        adminRole: true,
+        subscriptionActive: false,
+        couponSessionActive: false,
+        demoSessionActive: false
+      });
+    }
+
+    // ⭐ FIX: Check for active subscription in database
+    const subscriptionResult = await pool.query(
+      `SELECT * FROM subscriptions 
+       WHERE user_id = $1 
+       AND is_active = true 
+       AND expires_at > NOW()
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (subscriptionResult.rows.length > 0) {
+      const subscription = subscriptionResult.rows[0];
+      return res.json({
+        premium: true,
+        reason: 'subscription',
+        adminRole: false,
+        subscriptionActive: true,
+        couponSessionActive: false,
+        demoSessionActive: false,
+        expiresAt: subscription.expires_at
+      });
+    }
+
+    // ⭐ FIX: Check for active coupon redemption in database
+    const couponResult = await pool.query(
+      `SELECT * FROM coupon_redemptions 
+       WHERE user_id = $1 
+       AND is_active = true 
+       AND expires_at > NOW()
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (couponResult.rows.length > 0) {
+      const activeCoupon = couponResult.rows[0];
+      const timeRemaining = Math.floor((new Date(activeCoupon.expires_at) - new Date()) / 60000);
+      return res.json({
+        premium: true,
+        reason: 'coupon',
+        adminRole: false,
+        subscriptionActive: false,
+        couponSessionActive: true,
+        demoSessionActive: false,
+        expiresAt: activeCoupon.expires_at,
+        timeRemaining
+      });
+    }
+
+    // ⭐ FIX: Check for active demo session in database
+    const demoResult = await pool.query(
+      `SELECT * FROM demo_sessions 
+       WHERE user_id = $1 
+       AND is_active = true 
+       AND expires_at > NOW()
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (demoResult.rows.length > 0) {
+      const demoSession = demoResult.rows[0];
+      const timeRemaining = Math.floor((new Date(demoSession.expires_at) - new Date()) / 60000);
+      return res.json({
+        premium: true,
+        reason: 'demo',
+        adminRole: false,
+        subscriptionActive: false,
+        couponSessionActive: false,
+        demoSessionActive: true,
+        expiresAt: demoSession.expires_at,
+        timeRemaining
+      });
+    }
+
+    // No premium access
+    res.json({
+      premium: false,
+      reason: 'none',
+      adminRole: false,
       subscriptionActive: false,
       couponSessionActive: false,
       demoSessionActive: false
     });
-  }
 
-  const subscription = subscriptions.find(
-    s => s.userId === userId && s.isActive && new Date(s.expiresAt) > new Date()
-  );
-  if (subscription) {
-    return res.json({
-      premium: true,
-      reason: 'subscription',
-      adminRole: false,
-      subscriptionActive: true,
-      couponSessionActive: false,
-      demoSessionActive: false,
-      expiresAt: subscription.expiresAt
-    });
+  } catch (error) {
+    console.error('Entitlements check error:', error);
+    res.status(500).json({ error: 'Failed to check entitlements' });
   }
-
-  const activeCoupon = couponRedemptions.find(
-    r => r.userId === userId && r.isActive && new Date(r.expiresAt) > new Date()
-  );
-  if (activeCoupon) {
-    const timeRemaining = Math.floor((new Date(activeCoupon.expiresAt) - new Date()) / 60000);
-    return res.json({
-      premium: true,
-      reason: 'coupon',
-      adminRole: false,
-      subscriptionActive: false,
-      couponSessionActive: true,
-      demoSessionActive: false,
-      expiresAt: activeCoupon.expiresAt,
-      timeRemaining
-    });
-  }
-
-  const demoSession = demoSessions.find(
-    s => s.userId === userId && s.isActive && new Date(s.expiresAt) > new Date()
-  );
-  if (demoSession) {
-    const timeRemaining = Math.floor((new Date(demoSession.expiresAt) - new Date()) / 60000);
-    return res.json({
-      premium: true,
-      reason: 'demo',
-      adminRole: false,
-      subscriptionActive: false,
-      couponSessionActive: false,
-      demoSessionActive: true,
-      expiresAt: demoSession.expiresAt,
-      timeRemaining
-    });
-  }
-
-  res.json({
-    premium: false,
-    reason: 'none',
-    adminRole: false,
-    subscriptionActive: false,
-    couponSessionActive: false,
-    demoSessionActive: false
-  });
 });
+
 
 app.post('/subscriptions/activate', authenticateToken, (req, res) => {
   try {
@@ -1509,9 +1709,9 @@ app.post('/subscriptions/activate', authenticateToken, (req, res) => {
 
     subscriptions.push(subscription);
 
-    logAudit('SUBSCRIPTION_ACTIVATED', userId, userId, { 
-      paymentReference, 
-      paymentMethod 
+    logAudit('SUBSCRIPTION_ACTIVATED', userId, userId, {
+      paymentReference,
+      paymentMethod
     });
 
     res.json({
@@ -1594,7 +1794,7 @@ app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
     );
 
     if (existingRedemption) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'You already have an active coupon session',
         expiresAt: existingRedemption.expiresAt
       });
@@ -1616,9 +1816,9 @@ app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
     couponRedemptions.push(redemption);
     coupon.currentRedemptions++;
 
-    logAudit('COUPON_REDEEMED', userId, userId, { 
-      couponCode: coupon.code, 
-      durationHours 
+    logAudit('COUPON_REDEEMED', userId, userId, {
+      couponCode: coupon.code,
+      durationHours
     });
 
     res.json({
@@ -1645,7 +1845,7 @@ app.post('/admin/demo/activate', authenticateToken, couponLimiter, async (req, r
     }
 
     const validToken = await bcrypt.compare(demoToken, currentDemoToken);
-    
+
     if (!validToken) {
       logAudit('FAILED_DEMO_TOKEN_ATTEMPT', userId, userId, { deviceId });
       return res.status(401).json({ error: 'Invalid demo token' });
@@ -1669,7 +1869,7 @@ app.post('/admin/demo/activate', authenticateToken, couponLimiter, async (req, r
     }
 
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    
+
     const demoSession = {
       id: uuidv4(),
       userId,
@@ -1803,9 +2003,9 @@ app.post('/admin/demo/rotate-token', authenticateToken, requireAdmin, async (req
 
     logAudit('DEMO_TOKEN_ROTATED', req.user.id, null, {});
 
-    res.json({ 
-      success: true, 
-      message: 'Demo token rotated and all sessions revoked' 
+    res.json({
+      success: true,
+      message: 'Demo token rotated and all sessions revoked'
     });
   } catch (error) {
     console.error('Token rotation error:', error);
@@ -1816,7 +2016,7 @@ app.post('/admin/demo/rotate-token', authenticateToken, requireAdmin, async (req
 // CLEANUP
 setInterval(() => {
   const now = new Date();
-  
+
   couponRedemptions.forEach(r => {
     if (r.isActive && new Date(r.expiresAt) < now) {
       r.isActive = false;
@@ -1851,20 +2051,25 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 YCKF Backend Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`🌐 Listening on: 0.0.0.0:${PORT}`);
-  console.log(`\n��� Default Users:`);
-  console.log(`   Admin: admin@yckf.org / SecureAdmin@2024`);
-  console.log(`   User:  user@yckf.org / TestUser@2024`);
-  console.log(`\n��� Demo Token: DEMO-YCKF-2024`);
-  console.log(`\n⚠️  Production checklist:`);
-  console.log(`   ✓ Change JWT_SECRET`);
-  console.log(`   ✓ Use real database`);
-  console.log(`   ✓ Enable HTTPS`);
-  console.log(`   ✓ Set up monitoring`);
-  console.log(`   ✓ Configure email (EMAIL_USER and EMAIL_PASS in .env)\n`);
-});
+// ⭐ FIX: Initialize database before starting server
+(async () => {
+  try {
+    await initializeDatabase();
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`\n🚀 YCKF Backend Server running on port ${PORT}`);
+      console.log(`🌍 Environment: ${NODE_ENV}`);
+      console.log(`🗄️  Database: PostgreSQL Connected ✅`);
+      console.log(`🌐 Listening on: 0.0.0.0:${PORT}`);
+      console.log(`\n📧 Default Admin:`);
+      console.log(`   Email: admin@yckf.org`);
+      console.log(`   Password: SecureAdmin@2024`);
+      console.log(`\n✅ Server ready to accept requests\n`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+})();
 
 module.exports = app;
