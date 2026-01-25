@@ -1784,19 +1784,19 @@ app.post('/coupons/validate', authenticateToken, couponLimiter, async (req, res)
     }
 
     const coupon = couponResult.rows[0];
-    if (!coupon) {
-      return res.json({ valid: false, message: 'Invalid coupon code' });
-    }
 
-    if (!coupon.isActive) {
+    // ⭐ FIX: Check is_active (database column name with underscore)
+    if (!coupon.is_active) {
       return res.json({ valid: false, message: 'This coupon has been deactivated' });
     }
 
-    if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
+    // ⭐ FIX: Check expires_at (database column name with underscore)
+    if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
       return res.json({ valid: false, message: 'This coupon has expired' });
     }
 
-    if (coupon.maxRedemptions && coupon.currentRedemptions >= coupon.maxRedemptions) {
+    // ⭐ FIX: Check max_redemptions (database column name with underscore)
+    if (coupon.max_redemptions && coupon.current_redemptions >= coupon.max_redemptions) {
       return res.json({ valid: false, message: 'This coupon has reached its maximum usage limit' });
     }
 
@@ -1804,8 +1804,9 @@ app.post('/coupons/validate', authenticateToken, couponLimiter, async (req, res)
       valid: true,
       message: 'Coupon is valid',
       description: coupon.description,
-      maxRedemptions: coupon.maxRedemptions,
-      currentRedemptions: coupon.currentRedemptions
+      durationType: coupon.duration_type,  // ⭐ Return duration type to user
+      maxRedemptions: coupon.max_redemptions,
+      currentRedemptions: coupon.current_redemptions
     });
   } catch (error) {
     console.error('Coupon validation error:', error);
@@ -1813,51 +1814,56 @@ app.post('/coupons/validate', authenticateToken, couponLimiter, async (req, res)
   }
 });
 
+
 app.post('/coupons/redeem', authenticateToken, async (req, res) => {
   try {
-    const { couponCode } = req.body;  // ⭐ No duration choice for users
-
+    const { couponCode } = req.body;
     const userId = req.user.id;
 
-    if (!couponCode || !durationHours) {
-      return res.status(400).json({ error: 'Coupon code and duration required' });
-    }
-
-    if (![12, 24].includes(durationHours)) {
-      return res.status(400).json({ error: 'Duration must be 12 or 24 hours' });
+    if (!couponCode) {
+      return res.status(400).json({ error: 'Coupon code required' });
     }
 
     // ⭐ Get coupon from database
     const couponResult = await pool.query(
       'SELECT * FROM coupons WHERE UPPER(code) = UPPER($1) AND is_active = true',
-      [couponCode]
+      [couponCode.trim()]
     );
 
     if (couponResult.rows.length === 0) {
       return res.status(404).json({ error: 'Coupon not found or inactive' });
     }
+
     const coupon = couponResult.rows[0];
 
-    if (!coupon || !coupon.isActive) {
-      return res.status(400).json({ error: 'Invalid or inactive coupon' });
+    // Check if coupon has expired
+    if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'This coupon has expired' });
     }
 
-    if (coupon.maxRedemptions && coupon.currentRedemptions >= coupon.maxRedemptions) {
+    // Check max redemptions
+    if (coupon.max_redemptions && coupon.current_redemptions >= coupon.max_redemptions) {
       return res.status(400).json({ error: 'Coupon usage limit reached' });
     }
 
-    const existingRedemption = couponRedemptions.find(
-      r => r.userId === userId && r.isActive && new Date(r.expiresAt) > new Date()
+    // ⭐ Check for existing active redemption
+    const existingRedemption = await pool.query(
+      `SELECT * FROM coupon_redemptions 
+       WHERE user_id = $1 
+       AND is_active = true 
+       AND expires_at > NOW()
+       LIMIT 1`,
+      [userId]
     );
 
-    if (existingRedemption) {
+    if (existingRedemption.rows.length > 0) {
+      const existing = existingRedemption.rows[0];
       return res.status(400).json({
         error: 'You already have an active coupon session',
-        expiresAt: existingRedemption.expiresAt
+        expiresAt: existing.expires_at
       });
     }
 
-    const redeemedAt = new Date().toISOString();
     // ⭐ Calculate expiry based on ADMIN-SET duration from coupon
     let durationMs;
     switch (coupon.duration_type) {
@@ -1868,21 +1874,21 @@ app.post('/coupons/redeem', authenticateToken, async (req, res) => {
         durationMs = 24 * 60 * 60 * 1000;
         break;
       case '12months':
-        durationMs = 365 * 24 * 60 * 60 * 1000; // 12 months = 365 days
+        durationMs = 365 * 24 * 60 * 60 * 1000;
         break;
       default:
-        durationMs = 24 * 60 * 60 * 1000; // Default 24h
+        durationMs = 24 * 60 * 60 * 1000;
     }
+
     const expiresAt = new Date(Date.now() + durationMs);
     const accessDuration = Math.floor(durationMs / (60 * 1000)); // in minutes
-
     const redemptionId = uuidv4();
 
     // ⭐ Insert redemption into database
     await pool.query(
       `INSERT INTO coupon_redemptions (id, coupon_code, user_id, redeemed_at, expires_at, is_active, access_duration)
        VALUES ($1, $2, $3, NOW(), $4, $5, $6)`,
-      [redemptionId, coupon.code, req.user.id, expiresAt, true, accessDuration]
+      [redemptionId, coupon.code, userId, expiresAt, true, accessDuration]
     );
 
     // ⭐ Increment redemption count
@@ -1891,30 +1897,25 @@ app.post('/coupons/redeem', authenticateToken, async (req, res) => {
       [coupon.id]
     );
 
-    const redemption = {
-      id: redemptionId,
+    console.log(`✅ Coupon redeemed: ${coupon.code} by user ${userId}`);
+
+    await logAudit('COUPON_REDEEMED', userId, userId, {
       couponCode: coupon.code,
-      userId: req.user.id,
-      redeemedAt: new Date().toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      isActive: true,
-      accessDuration,
-    };
-    logAudit('COUPON_REDEEMED', userId, userId, {
-      couponCode: coupon.code,
-      durationHours
+      durationType: coupon.duration_type
     });
 
     res.json({
       success: true,
       redemption: {
-        redeemedAt,
-        expiresAt,
-        accessDuration: durationHours
-      }
+        redeemedAt: new Date().toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        accessDuration: accessDuration,
+        durationType: coupon.duration_type
+      },
+      message: `Coupon redeemed! You now have ${coupon.duration_type} of premium access.`
     });
   } catch (error) {
-    console.error('Coupon redemption error:', error);
+    console.error('❌ Coupon redemption error:', error);
     res.status(500).json({ error: 'Failed to redeem coupon' });
   }
 });
