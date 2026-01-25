@@ -1983,8 +1983,13 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
       return res.status(400).json({ error: 'Coupon code required' });
     }
 
-    const existingCoupon = coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
-    if (existingCoupon) {
+    // ⭐ FIX: Check database for existing coupon
+    const existingCoupon = await pool.query(
+      'SELECT * FROM coupons WHERE UPPER(code) = UPPER($1)',
+      [code.trim()]
+    );
+
+    if (existingCoupon.rows.length > 0) {
       return res.status(400).json({ error: 'Coupon code already exists' });
     }
 
@@ -1996,35 +2001,35 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         couponId,
-        code.toUpperCase(),
+        code.toUpperCase().trim(),
         true,
         description || null,
         durationType || '24h',
         expiresAt || null,
         maxRedemptions || null,
         0,
-        req.user.id
+        req.user.email
       ]
     );
 
     const newCoupon = {
       id: couponId,
-      code: code.toUpperCase(),
+      code: code.toUpperCase().trim(),
       isActive: true,
       durationType: durationType || '24h',
-      createdAt: new Date().toISOString(),
-      createdBy: req.user.id,
-      description,
-      expiresAt,
-      maxRedemptions,
+      description: description || null,
+      expiresAt: expiresAt || null,
+      maxRedemptions: maxRedemptions || null,
       currentRedemptions: 0,
+      createdBy: req.user.email,
+      createdAt: new Date().toISOString()
     };
 
-    logAudit('COUPON_CREATED', req.user.id, null, { code: coupon.code });
+    await logAudit('COUPON_CREATED', req.user.id, null, { code: code.toUpperCase() });
 
     res.json({
       success: true,
-      coupon
+      coupon: newCoupon
     });
   } catch (error) {
     console.error('Coupon creation error:', error);
@@ -2045,18 +2050,21 @@ app.get('/admin/coupons', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, (req, res) => {
+app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { code } = req.body;
 
-    const coupon = coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
-    if (!coupon) {
+    // ⭐ FIX: Update in database
+    const result = await pool.query(
+      'UPDATE coupons SET is_active = false WHERE UPPER(code) = UPPER($1) RETURNING *',
+      [code.trim()]
+    );
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Coupon not found' });
     }
 
-    coupon.isActive = false;
-
-    logAudit('COUPON_DEACTIVATED', req.user.id, null, { code });
+    await logAudit('COUPON_DEACTIVATED', req.user.id, null, { code });
 
     res.json({ success: true, message: 'Coupon deactivated' });
   } catch (error) {
@@ -2065,18 +2073,21 @@ app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, (req, res
   }
 });
 
-app.post('/admin/coupons/reactivate', authenticateToken, requireAdmin, (req, res) => {
+app.post('/admin/coupons/reactivate', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { code } = req.body;
 
-    const coupon = coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
-    if (!coupon) {
+    // ⭐ FIX: Update in database
+    const result = await pool.query(
+      'UPDATE coupons SET is_active = true WHERE UPPER(code) = UPPER($1) RETURNING *',
+      [code.trim()]
+    );
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Coupon not found' });
     }
 
-    coupon.isActive = true;
-
-    logAudit('COUPON_REACTIVATED', req.user.id, null, { code });
+    await logAudit('COUPON_REACTIVATED', req.user.id, null, { code });
 
     res.json({ success: true, message: 'Coupon reactivated' });
   } catch (error) {
@@ -2085,14 +2096,33 @@ app.post('/admin/coupons/reactivate', authenticateToken, requireAdmin, (req, res
   }
 });
 
-app.get('/admin/redemptions', authenticateToken, requireAdmin, (req, res) => {
-  res.json({ redemptions: couponRedemptions });
+app.get('/admin/redemptions', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM coupon_redemptions ORDER BY redeemed_at DESC'
+    );
+
+    res.json({ redemptions: result.rows });
+  } catch (error) {
+    console.error('Get redemptions error:', error);
+    res.status(500).json({ error: 'Failed to fetch redemptions' });
+  }
 });
 
-app.get('/admin/audit-logs', authenticateToken, requireAdmin, (req, res) => {
-  const limit = parseInt(req.query.limit) || 100;
-  const logs = auditLogs.slice(-limit).reverse();
-  res.json({ logs });
+app.get('/admin/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    
+    const result = await pool.query(
+      'SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT $1',
+      [limit]
+    );
+
+    res.json({ logs: result.rows });
+  } catch (error) {
+    console.error('Get audit logs error:', error);
+    res.status(500).json({ error: 'Failed to fetch audit logs' });
+  }
 });
 
 app.post('/admin/demo/rotate-token', authenticateToken, requireAdmin, async (req, res) => {
