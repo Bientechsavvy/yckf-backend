@@ -2010,19 +2010,20 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
     const couponId = uuidv4();
 
     // ⭐ Insert coupon into database
+   // ⭐ FIX: Correct parameter mapping
     await pool.query(
       `INSERT INTO coupons (id, code, is_active, description, duration_type, expires_at, max_redemptions, current_redemptions, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
-        couponId,
-        code.toUpperCase().trim(),
-        true,
-        description || null,
-        durationType || '24h',
-        expiresAt || null,
-        maxRedemptions || null,
-        0,
-        req.user.email
+        couponId,                           // $1 - id
+        code.toUpperCase().trim(),          // $2 - code
+        true,                               // $3 - is_active
+        description || null,                // $4 - description
+        durationType || '24h',              // $5 - duration_type ✅
+        expiresAt ? new Date(expiresAt).toISOString() : null,  // $6 - expires_at (convert to timestamp) ✅
+        maxRedemptions || null,             // $7 - max_redemptions
+        0,                                  // $8 - current_redemptions
+        req.user.email                      // $9 - created_by
       ]
     );
 
