@@ -1985,6 +1985,8 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
   try {
     const { code, description, durationType, expiresAt, maxRedemptions } = req.body;
 
+    console.log('📝 Coupon creation request:', { code, durationType, expiresAt, maxRedemptions });
+
     // ⭐ Validate duration type
     const validDurations = ['12h', '24h', '12months'];
     if (durationType && !validDurations.includes(durationType)) {
@@ -1997,7 +1999,7 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
       return res.status(400).json({ error: 'Coupon code required' });
     }
 
-    // ⭐ FIX: Check database for existing coupon
+    // ⭐ Check database for existing coupon
     const existingCoupon = await pool.query(
       'SELECT * FROM coupons WHERE UPPER(code) = UPPER($1)',
       [code.trim()]
@@ -2009,23 +2011,38 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
 
     const couponId = uuidv4();
 
-    // ⭐ Insert coupon into database
-   // ⭐ FIX: Correct parameter mapping
+    // ⭐ FIX: Safely handle expiresAt date conversion
+    let expiresAtTimestamp = null;
+    if (expiresAt && expiresAt.trim() !== '') {
+      try {
+        const dateObj = new Date(expiresAt);
+        if (!isNaN(dateObj.getTime())) {
+          expiresAtTimestamp = dateObj.toISOString();
+        } else {
+          console.log('⚠️  Invalid expiresAt date, using null');
+        }
+      } catch (e) {
+        console.log('⚠️  Date parsing error, using null:', e.message);
+      }
+    }
+
     await pool.query(
       `INSERT INTO coupons (id, code, is_active, description, duration_type, expires_at, max_redemptions, current_redemptions, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
-        couponId,                           // $1 - id
-        code.toUpperCase().trim(),          // $2 - code
-        true,                               // $3 - is_active
-        description || null,                // $4 - description
-        durationType || '24h',              // $5 - duration_type ✅
-        expiresAt ? new Date(expiresAt).toISOString() : null,  // $6 - expires_at (convert to timestamp) ✅
-        maxRedemptions || null,             // $7 - max_redemptions
-        0,                                  // $8 - current_redemptions
-        req.user.email                      // $9 - created_by
+        couponId,
+        code.toUpperCase().trim(),
+        true,
+        description || null,
+        durationType || '24h',
+        expiresAtTimestamp,
+        maxRedemptions || null,
+        0,
+        req.user.email
       ]
     );
+
+    console.log(`✅ Coupon created: ${code.toUpperCase()}`);
 
     const newCoupon = {
       id: couponId,
@@ -2033,22 +2050,29 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
       isActive: true,
       durationType: durationType || '24h',
       description: description || null,
-      expiresAt: expiresAt || null,
+      expiresAt: expiresAtTimestamp,
       maxRedemptions: maxRedemptions || null,
       currentRedemptions: 0,
       createdBy: req.user.email,
       createdAt: new Date().toISOString()
     };
 
-    await logAudit('COUPON_CREATED', req.user.id, null, { code: code.toUpperCase() });
+    await logAudit('COUPON_CREATED', req.user.id, null, { 
+      code: code.toUpperCase(),
+      durationType: durationType || '24h'
+    });
 
     res.json({
       success: true,
-      coupon: newCoupon
+      coupon: newCoupon,
+      message: 'Coupon created successfully'
     });
   } catch (error) {
-    console.error('Coupon creation error:', error);
-    res.status(500).json({ error: 'Failed to create coupon' });
+    console.error('❌ Coupon creation error:', error);
+    res.status(500).json({ 
+      error: 'Failed to create coupon',
+      details: error.message 
+    });
   }
 });
 
