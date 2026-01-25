@@ -189,18 +189,19 @@ async function initializeDatabase() {
 
     // Create coupons table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS coupons (
-        id VARCHAR(255) PRIMARY KEY,
-        code VARCHAR(100) UNIQUE NOT NULL,
-        is_active BOOLEAN DEFAULT true,
-        description TEXT,
-        expires_at TIMESTAMP,
-        max_redemptions INTEGER,
-        current_redemptions INTEGER DEFAULT 0,
-        created_by VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+  CREATE TABLE IF NOT EXISTS coupons (
+    id VARCHAR(255) PRIMARY KEY,
+    code VARCHAR(100) UNIQUE NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    description TEXT,
+    duration_type VARCHAR(20) NOT NULL DEFAULT '24h',
+    expires_at TIMESTAMP,
+    max_redemptions INTEGER,
+    current_redemptions INTEGER DEFAULT 0,
+    created_by VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
     // Create reset_codes table
     await pool.query(`
@@ -229,8 +230,8 @@ async function initializeDatabase() {
 
     // Inside initializeDatabase() function, after creating users table
 
-// Create coupon_redemptions table
-await pool.query(`
+    // Create coupon_redemptions table
+    await pool.query(`
   CREATE TABLE IF NOT EXISTS coupon_redemptions (
     id VARCHAR(255) PRIMARY KEY,
     coupon_code VARCHAR(100) NOT NULL,
@@ -243,8 +244,8 @@ await pool.query(`
   )
 `);
 
-// Create demo_sessions table
-await pool.query(`
+    // Create demo_sessions table
+    await pool.query(`
   CREATE TABLE IF NOT EXISTS demo_sessions (
     id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
@@ -255,7 +256,7 @@ await pool.query(`
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )
 `);
-console.log('✅ Coupon redemptions and demo sessions tables ready');
+    console.log('✅ Coupon redemptions and demo sessions tables ready');
 
     // Create default admin if doesn't exist
     const adminCheck = await pool.query(
@@ -1280,7 +1281,7 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
       [normalizedEmail]
     );
     const user = result.rows.length > 0 ? result.rows[0] : null;
-    
+
     if (!user) {
       console.log(`Password reset requested for non-existent email: ${email}`);
       return res.json({
@@ -1297,7 +1298,7 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
       'INSERT INTO reset_codes (email, code, expires_at, used) VALUES ($1, $2, $3, $4)',
       [normalizedEmail, code, expiresAt, false]
     );
-    
+
     try {
       await sendResetCodeEmail(email, code, user.name);
       logAudit('PASSWORD_RESET_REQUESTED', user.id, user.id, { email });
@@ -1318,7 +1319,8 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
   }
 });
 
-app.post('/auth/verify-reset-code', resetPasswordLimiter, async (req, res) => {  try {
+app.post('/auth/verify-reset-code', resetPasswordLimiter, async (req, res) => {
+  try {
     const { email, code } = req.body;
 
     if (!email || !code) {
@@ -1326,18 +1328,18 @@ app.post('/auth/verify-reset-code', resetPasswordLimiter, async (req, res) => { 
     }
 
     // ⭐ FIX: Query database
-const normalizedEmail = email.toLowerCase().trim();
-const result = await pool.query(
-  `SELECT * FROM reset_codes 
+    const normalizedEmail = email.toLowerCase().trim();
+    const result = await pool.query(
+      `SELECT * FROM reset_codes 
    WHERE LOWER(email) = LOWER($1) 
    AND code = $2 
    AND used = false 
    AND expires_at > NOW()
    ORDER BY created_at DESC
    LIMIT 1`,
-  [normalizedEmail, code]
-);
-const resetCode = result.rows.length > 0 ? result.rows[0] : null;
+      [normalizedEmail, code]
+    );
+    const resetCode = result.rows.length > 0 ? result.rows[0] : null;
     if (!resetCode) {
       return res.status(400).json({
         error: 'Invalid or expired reset code'
@@ -1373,30 +1375,30 @@ app.post('/auth/reset-password', resetPasswordLimiter, async (req, res) => {
     }
 
     // ⭐ FIX: Query database
-const normalizedEmail = email.toLowerCase().trim();
-const result = await pool.query(
-  `SELECT * FROM reset_codes 
+    const normalizedEmail = email.toLowerCase().trim();
+    const result = await pool.query(
+      `SELECT * FROM reset_codes 
    WHERE LOWER(email) = LOWER($1) 
    AND code = $2 
    AND used = false 
    AND expires_at > NOW()
    ORDER BY created_at DESC
    LIMIT 1`,
-  [normalizedEmail, code]
-);
-const resetCode = result.rows.length > 0 ? result.rows[0] : null;
+      [normalizedEmail, code]
+    );
+    const resetCode = result.rows.length > 0 ? result.rows[0] : null;
     if (!resetCode) {
       return res.status(400).json({
         error: 'Invalid or expired reset code'
       });
     }
 
-// ⭐ FIX: Get user from database
-const userResult = await pool.query(
-  'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
-  [normalizedEmail]
-);
-const user = userResult.rows.length > 0 ? userResult.rows[0] : null;    if (!user) {
+    // ⭐ FIX: Get user from database
+    const userResult = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+      [normalizedEmail]
+    );
+    const user = userResult.rows.length > 0 ? userResult.rows[0] : null; if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -1429,17 +1431,17 @@ const user = userResult.rows.length > 0 ? userResult.rows[0] : null;    if (!use
     }
 
     // ⭐ FIX: Update password in database
-const newPasswordHash = await bcrypt.hash(newPassword, 10);
-await pool.query(
-  'UPDATE users SET password_hash = $1 WHERE id = $2',
-  [newPasswordHash, user.id]
-);
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newPasswordHash, user.id]
+    );
 
-// Mark reset code as used
-await pool.query(
-  'UPDATE reset_codes SET used = true WHERE id = $1',
-  [resetCode.id]
-);
+    // Mark reset code as used
+    await pool.query(
+      'UPDATE reset_codes SET used = true WHERE id = $1',
+      [resetCode.id]
+    );
 
     logAudit('PASSWORD_RESET_COMPLETED', user.id, user.id, { email });
 
@@ -1742,7 +1744,11 @@ app.post('/subscriptions/activate', authenticateToken, (req, res) => {
   }
 });
 
-app.post('/coupons/validate', authenticateToken, couponLimiter, (req, res) => {
+// app.post('/coupons/validate', authenticateToken, couponLimiter, (req, res) => {
+//   try {
+//     const { couponCode } = req.body;
+// ✅ CORRECT
+app.post('/coupons/validate', authenticateToken, couponLimiter, async (req, res) => {
   try {
     const { couponCode } = req.body;
 
@@ -1750,8 +1756,20 @@ app.post('/coupons/validate', authenticateToken, couponLimiter, (req, res) => {
       return res.status(400).json({ valid: false, message: 'Coupon code required' });
     }
 
-    const coupon = coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+    // ⭐ Get coupon from database
+    const couponResult = await pool.query(
+      'SELECT * FROM coupons WHERE UPPER(code) = UPPER($1)',
+      [couponCode]
+    );
 
+    if (couponResult.rows.length === 0) {
+      return res.json({
+        valid: false,
+        message: 'Coupon code not found',
+      });
+    }
+
+    const coupon = couponResult.rows[0];
     if (!coupon) {
       return res.json({ valid: false, message: 'Invalid coupon code' });
     }
@@ -1781,9 +1799,10 @@ app.post('/coupons/validate', authenticateToken, couponLimiter, (req, res) => {
   }
 });
 
-app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
+app.post('/coupons/redeem', authenticateToken, async (req, res) => {
   try {
-    const { couponCode, durationHours } = req.body;
+    const { couponCode } = req.body;  // ⭐ No duration choice for users
+
     const userId = req.user.id;
 
     if (!couponCode || !durationHours) {
@@ -1794,7 +1813,16 @@ app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
       return res.status(400).json({ error: 'Duration must be 12 or 24 hours' });
     }
 
-    const coupon = coupons.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
+    // ⭐ Get coupon from database
+    const couponResult = await pool.query(
+      'SELECT * FROM coupons WHERE UPPER(code) = UPPER($1) AND is_active = true',
+      [couponCode]
+    );
+
+    if (couponResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Coupon not found or inactive' });
+    }
+    const coupon = couponResult.rows[0];
 
     if (!coupon || !coupon.isActive) {
       return res.status(400).json({ error: 'Invalid or inactive coupon' });
@@ -1816,21 +1844,48 @@ app.post('/coupons/redeem', authenticateToken, couponLimiter, (req, res) => {
     }
 
     const redeemedAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
+    // ⭐ Calculate expiry based on ADMIN-SET duration from coupon
+    let durationMs;
+    switch (coupon.duration_type) {
+      case '12h':
+        durationMs = 12 * 60 * 60 * 1000;
+        break;
+      case '24h':
+        durationMs = 24 * 60 * 60 * 1000;
+        break;
+      case '12months':
+        durationMs = 365 * 24 * 60 * 60 * 1000; // 12 months = 365 days
+        break;
+      default:
+        durationMs = 24 * 60 * 60 * 1000; // Default 24h
+    }
+    const expiresAt = new Date(Date.now() + durationMs);
+    const accessDuration = Math.floor(durationMs / (60 * 1000)); // in minutes
+
+    const redemptionId = uuidv4();
+
+    // ⭐ Insert redemption into database
+    await pool.query(
+      `INSERT INTO coupon_redemptions (id, coupon_code, user_id, redeemed_at, expires_at, is_active, access_duration)
+       VALUES ($1, $2, $3, NOW(), $4, $5, $6)`,
+      [redemptionId, coupon.code, req.user.id, expiresAt, true, accessDuration]
+    );
+
+    // ⭐ Increment redemption count
+    await pool.query(
+      'UPDATE coupons SET current_redemptions = current_redemptions + 1 WHERE id = $1',
+      [coupon.id]
+    );
 
     const redemption = {
-      id: uuidv4(),
+      id: redemptionId,
       couponCode: coupon.code,
-      userId,
-      redeemedAt,
-      expiresAt,
+      userId: req.user.id,
+      redeemedAt: new Date().toISOString(),
+      expiresAt: expiresAt.toISOString(),
       isActive: true,
-      accessDuration: durationHours
+      accessDuration,
     };
-
-    couponRedemptions.push(redemption);
-    coupon.currentRedemptions++;
-
     logAudit('COUPON_REDEEMED', userId, userId, {
       couponCode: coupon.code,
       durationHours
@@ -1912,9 +1967,17 @@ app.post('/admin/demo/activate', authenticateToken, couponLimiter, async (req, r
   }
 });
 
-app.post('/admin/coupons/create', authenticateToken, requireAdmin, (req, res) => {
+app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { code, description, expiresAt, maxRedemptions } = req.body;
+    const { code, description, durationType, expiresAt, maxRedemptions } = req.body;
+
+    // ⭐ Validate duration type
+    const validDurations = ['12h', '24h', '12months'];
+    if (durationType && !validDurations.includes(durationType)) {
+      return res.status(400).json({
+        error: 'Invalid duration type. Must be 12h, 24h, or 12months'
+      });
+    }
 
     if (!code) {
       return res.status(400).json({ error: 'Coupon code required' });
@@ -1925,19 +1988,37 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, (req, res) =>
       return res.status(400).json({ error: 'Coupon code already exists' });
     }
 
-    const coupon = {
-      id: uuidv4(),
+    const couponId = uuidv4();
+
+    // ⭐ Insert coupon into database
+    await pool.query(
+      `INSERT INTO coupons (id, code, is_active, description, duration_type, expires_at, max_redemptions, current_redemptions, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        couponId,
+        code.toUpperCase(),
+        true,
+        description || null,
+        durationType || '24h',
+        expiresAt || null,
+        maxRedemptions || null,
+        0,
+        req.user.id
+      ]
+    );
+
+    const newCoupon = {
+      id: couponId,
       code: code.toUpperCase(),
       isActive: true,
+      durationType: durationType || '24h',
       createdAt: new Date().toISOString(),
-      createdBy: req.user.email,
-      expiresAt: expiresAt || null,
-      maxRedemptions: maxRedemptions || null,
+      createdBy: req.user.id,
+      description,
+      expiresAt,
+      maxRedemptions,
       currentRedemptions: 0,
-      description: description || null
     };
-
-    coupons.push(coupon);
 
     logAudit('COUPON_CREATED', req.user.id, null, { code: coupon.code });
 
@@ -1951,8 +2032,17 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, (req, res) =>
   }
 });
 
-app.get('/admin/coupons', authenticateToken, requireAdmin, (req, res) => {
-  res.json({ coupons });
+app.get('/admin/coupons', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM coupons ORDER BY created_at DESC'
+    );
+
+    res.json({ coupons: result.rows });
+  } catch (error) {
+    console.error('Get coupons error:', error);
+    res.status(500).json({ error: 'Failed to fetch coupons' });
+  }
 });
 
 app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, (req, res) => {
@@ -2029,37 +2119,29 @@ app.post('/admin/demo/rotate-token', authenticateToken, requireAdmin, async (req
 });
 
 // CLEANUP
-setInterval(() => {
-  const now = new Date();
+// Cleanup expired coupons/demo sessions (using database)
+setInterval(async () => {
+  try {
+    // Deactivate expired coupon redemptions
+    await pool.query(
+      `UPDATE coupon_redemptions 
+       SET is_active = false 
+       WHERE is_active = true 
+       AND expires_at < NOW()`
+    );
 
-  couponRedemptions.forEach(r => {
-    if (r.isActive && new Date(r.expiresAt) < now) {
-      r.isActive = false;
-      console.log(`[CLEANUP] Deactivated expired coupon: ${r.id}`);
-    }
-  });
-
-  demoSessions.forEach(s => {
-    if (s.isActive && new Date(s.expiresAt) < now) {
-      s.isActive = false;
-      console.log(`[CLEANUP] Deactivated expired demo: ${s.id}`);
-    }
-  });
-
-  subscriptions.forEach(s => {
-    if (s.isActive && new Date(s.expiresAt) < now) {
-      s.isActive = false;
-      console.log(`[CLEANUP] Deactivated expired subscription: ${s.id}`);
-    }
-  });
-
-  resetCodes.forEach(rc => {
-    if (!rc.used && new Date(rc.expiresAt) < now) {
-      rc.used = true;
-      console.log(`[CLEANUP] Expired reset code for: ${rc.email}`);
-    }
-  });
+    // Deactivate expired demo sessions
+    await pool.query(
+      `UPDATE demo_sessions 
+       SET is_active = false 
+       WHERE is_active = true 
+       AND expires_at < NOW()`
+    );
+  } catch (error) {
+    console.error('Cleanup interval error:', error);
+  }
 }, 60000);
+
 
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
@@ -2070,7 +2152,7 @@ app.use((err, req, res, next) => {
 (async () => {
   try {
     await initializeDatabase();
-    
+
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n🚀 YCKF Backend Server running on port ${PORT}`);
       console.log(`🌍 Environment: ${NODE_ENV}`);
