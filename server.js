@@ -188,20 +188,34 @@ async function initializeDatabase() {
     `);
 
     // Create coupons table
+ // Create coupons table
     await pool.query(`
-  CREATE TABLE IF NOT EXISTS coupons (
-    id VARCHAR(255) PRIMARY KEY,
-    code VARCHAR(100) UNIQUE NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    description TEXT,
-    duration_type VARCHAR(20) NOT NULL DEFAULT '24h',
-    expires_at TIMESTAMP,
-    max_redemptions INTEGER,
-    current_redemptions INTEGER DEFAULT 0,
-    created_by VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+      CREATE TABLE IF NOT EXISTS coupons (
+        id VARCHAR(255) PRIMARY KEY,
+        code VARCHAR(100) UNIQUE NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        description TEXT,
+        duration_type VARCHAR(20) NOT NULL DEFAULT '24h',
+        expires_at TIMESTAMP,
+        max_redemptions INTEGER,
+        current_redemptions INTEGER DEFAULT 0,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // ⭐ NEW: Add migration to update existing table
+    // This adds the duration_type column if it doesn't exist
+    try {
+      await pool.query(`
+        ALTER TABLE coupons 
+        ADD COLUMN IF NOT EXISTS duration_type VARCHAR(20) DEFAULT '24h'
+      `);
+      console.log('✅ Coupons table migrated - duration_type column added');
+    } catch (migrationError) {
+      // Column might already exist, that's OK
+      console.log('ℹ️  Coupons table migration: column already exists or migration not needed');
+    }
 
     // Create reset_codes table
     await pool.query(`
