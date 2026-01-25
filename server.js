@@ -1078,7 +1078,7 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email format' });
     }
 
-    // ⭐ FIX: Check database for existing user (case-insensitive)
+    // ⭐ Check database for existing email (case-insensitive)
     const normalizedEmail = email.toLowerCase().trim();
     const existingUser = await pool.query(
       'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
@@ -1091,52 +1091,39 @@ app.post('/auth/register', async (req, res) => {
         error: 'An account with this email already exists. Please login instead.'
       });
     }
-  // ⭐ FIX: Check database for existing user (case-insensitive)
-const normalizedEmail = email.toLowerCase().trim();
-const existingUser = await pool.query(
-  'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
-  [normalizedEmail]
-);
 
-if (existingUser.rows.length > 0) {
-  console.log(`❌ Registration blocked - Email exists: ${normalizedEmail}`);
-  return res.status(400).json({
-    error: 'An account with this email already exists. Please login instead.'
-  });
-}
+    // ⭐ Check for duplicate name (case-insensitive)
+    const userName = name || email.split('@')[0];
+    const existingName = await pool.query(
+      'SELECT * FROM users WHERE LOWER(name) = LOWER($1)',
+      [userName.toLowerCase().trim()]
+    );
 
-// ⭐ NEW: Check for duplicate name (case-insensitive)
-const userName = name || email.split('@')[0];
-const existingName = await pool.query(
-  'SELECT * FROM users WHERE LOWER(name) = LOWER($1)',
-  [userName.toLowerCase().trim()]
-);
+    if (existingName.rows.length > 0) {
+      console.log(`❌ Registration blocked - Name already exists: ${userName}`);
+      return res.status(400).json({
+        error: 'This name is already registered. Please choose a different name.'
+      });
+    }
 
-if (existingName.rows.length > 0) {
-  console.log(`❌ Registration blocked - Name already exists: ${userName}`);
-  return res.status(400).json({
-    error: 'This name is already registered. Please choose a different name.'
-  });
-}
+    // Validate password (userName already defined above)
+    const passwordLower = password.toLowerCase();
+    const nameParts = userName.toLowerCase().split(' ').filter(part => part.length > 2);
+    const nameInPassword = nameParts.some(part => passwordLower.includes(part));
 
-// Validate password (userName already defined above)
-const passwordLower = password.toLowerCase();
-const nameParts = userName.toLowerCase().split(' ').filter(part => part.length > 2);
-const nameInPassword = nameParts.some(part => passwordLower.includes(part));
+    if (nameInPassword) {
+      return res.status(400).json({
+        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.'
+      });
+    }
 
-if (nameInPassword) {
-  return res.status(400).json({
-    error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.'
-  });
-}
+    if (password.length < 8) {
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters long'
+      });
+    }
 
-if (password.length < 8) {
-  return res.status(400).json({
-    error: 'Password must be at least 8 characters long'
-  });
-}
-
-    // ⭐ FIX: Insert into database
+    // ⭐ Insert into database
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = uuidv4();
 
@@ -1287,12 +1274,13 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
     }
 
     // ⭐ FIX: Query database
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = email.toLowerCase().trim();  // ✅ ONLY ONE DECLARATION
     const result = await pool.query(
       'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
       [normalizedEmail]
     );
     const user = result.rows.length > 0 ? result.rows[0] : null;
+    
     if (!user) {
       console.log(`Password reset requested for non-existent email: ${email}`);
       return res.json({
@@ -1304,11 +1292,12 @@ app.post('/auth/forgot-password', resetPasswordLimiter, async (req, res) => {
     const code = generateResetCode();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    // ⭐ FIX: Save to database
+    // ⭐ FIX: Save to database (normalizedEmail already declared above)
     await pool.query(
       'INSERT INTO reset_codes (email, code, expires_at, used) VALUES ($1, $2, $3, $4)',
       [normalizedEmail, code, expiresAt, false]
     );
+    
     try {
       await sendResetCodeEmail(email, code, user.name);
       logAudit('PASSWORD_RESET_REQUESTED', user.id, user.id, { email });
@@ -2097,5 +2086,4 @@ app.use((err, req, res, next) => {
     process.exit(1);
   }
 })();
-
 module.exports = app;
