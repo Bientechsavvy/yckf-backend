@@ -1091,24 +1091,50 @@ app.post('/auth/register', async (req, res) => {
         error: 'An account with this email already exists. Please login instead.'
       });
     }
+  // ⭐ FIX: Check database for existing user (case-insensitive)
+const normalizedEmail = email.toLowerCase().trim();
+const existingUser = await pool.query(
+  'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+  [normalizedEmail]
+);
 
-    // Validate password
-    const userName = name || email.split('@')[0];
-    const passwordLower = password.toLowerCase();
-    const nameParts = userName.toLowerCase().split(' ').filter(part => part.length > 2);
-    const nameInPassword = nameParts.some(part => passwordLower.includes(part));
+if (existingUser.rows.length > 0) {
+  console.log(`❌ Registration blocked - Email exists: ${normalizedEmail}`);
+  return res.status(400).json({
+    error: 'An account with this email already exists. Please login instead.'
+  });
+}
 
-    if (nameInPassword) {
-      return res.status(400).json({
-        error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.'
-      });
-    }
+// ⭐ NEW: Check for duplicate name (case-insensitive)
+const userName = name || email.split('@')[0];
+const existingName = await pool.query(
+  'SELECT * FROM users WHERE LOWER(name) = LOWER($1)',
+  [userName.toLowerCase().trim()]
+);
 
-    if (password.length < 8) {
-      return res.status(400).json({
-        error: 'Password must be at least 8 characters long'
-      });
-    }
+if (existingName.rows.length > 0) {
+  console.log(`❌ Registration blocked - Name already exists: ${userName}`);
+  return res.status(400).json({
+    error: 'This name is already registered. Please choose a different name.'
+  });
+}
+
+// Validate password (userName already defined above)
+const passwordLower = password.toLowerCase();
+const nameParts = userName.toLowerCase().split(' ').filter(part => part.length > 2);
+const nameInPassword = nameParts.some(part => passwordLower.includes(part));
+
+if (nameInPassword) {
+  return res.status(400).json({
+    error: 'Password cannot contain your name or parts of your name. Please choose a stronger password.'
+  });
+}
+
+if (password.length < 8) {
+  return res.status(400).json({
+    error: 'Password must be at least 8 characters long'
+  });
+}
 
     // ⭐ FIX: Insert into database
     const passwordHash = await bcrypt.hash(password, 10);
@@ -1405,7 +1431,7 @@ const user = userResult.rows.length > 0 ? userResult.rows[0] : null;    if (!use
     // ============================================
     // NEW: VALIDATE PASSWORD IS DIFFERENT FROM OLD PASSWORD
     // ============================================
-    const isSamePassword = await bcrypt.compare(newPassword, user.passwordHash);
+    const isSamePassword = await bcrypt.compare(newPassword, user.password_hash);
 
     if (isSamePassword) {
       return res.status(400).json({
