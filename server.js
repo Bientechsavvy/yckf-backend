@@ -1057,6 +1057,68 @@ app.post('/email/booking-submission', emailLimiter, async (req, res) => {
   }
 });
 
+// GENERIC EMAIL SENDER - Keeps backend clean
+app.post('/email/send', emailLimiter, async (req, res) => {
+  try {
+    const { to, subject, html, screenshot, metadata } = req.body;
+
+    // Validate required fields
+    if (!to || !subject || !html) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields (to, subject, html)'
+      });
+    }
+
+    if (!emailTransporter) {
+      return res.status(503).json({
+        success: false,
+        error: 'Email service not configured'
+      });
+    }
+
+    console.log(`📧 Sending email: ${subject}`);
+
+    // Prepare mail options
+    const mailOptions = {
+      from: `"YCKF App" <${EMAIL_USER}>`,
+      to: Array.isArray(to) ? to : [to],
+      subject: subject,
+      html: html,
+      attachments: screenshot ? [{
+        filename: `screenshot_${Date.now()}.jpg`,
+        content: screenshot.split('base64,')[1] || screenshot,
+        encoding: 'base64'
+      }] : []
+    };
+
+    // Send email
+    await emailTransporter.sendMail(mailOptions);
+
+    // Log audit if metadata provided
+    if (metadata) {
+      await logAudit('EMAIL_SENT', metadata.userEmail || 'system', null, {
+        subject: subject,
+        ...metadata
+      });
+    }
+
+    console.log('✅ Email sent successfully');
+
+    res.json({
+      success: true,
+      message: 'Email sent successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Email send error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send email'
+    });
+  }
+});
+
 // ============================================
 // HEALTH CHECK
 // ============================================
