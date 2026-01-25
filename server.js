@@ -2076,19 +2076,44 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
     });
   }
 });
-
 app.get('/admin/coupons', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM coupons ORDER BY created_at DESC'
     );
 
-    res.json({ coupons: result.rows });
+    // Transform snake_case to camelCase for frontend
+    const coupons = result.rows.map(coupon => ({
+      id: coupon.id,
+      code: coupon.code,
+      isActive: coupon.is_active,  // ⭐ Transform here
+      description: coupon.description,
+      durationType: coupon.duration_type,  // ⭐ Transform here
+      expiresAt: coupon.expires_at,  // ⭐ Transform here
+      maxRedemptions: coupon.max_redemptions,  // ⭐ Transform here
+      currentRedemptions: coupon.current_redemptions,  // ⭐ Transform here
+      createdBy: coupon.created_by,  // ⭐ Transform here
+      createdAt: coupon.created_at  // ⭐ Transform here
+    }));
+
+    res.json({ coupons });
   } catch (error) {
     console.error('Get coupons error:', error);
     res.status(500).json({ error: 'Failed to fetch coupons' });
   }
 });
+// app.get('/admin/coupons', authenticateToken, requireAdmin, async (req, res) => {
+//   try {
+//     const result = await pool.query(
+//       'SELECT * FROM coupons ORDER BY created_at DESC'
+//     );
+
+//     res.json({ coupons: result.rows });
+//   } catch (error) {
+//     console.error('Get coupons error:', error);
+//     res.status(500).json({ error: 'Failed to fetch coupons' });
+//   }
+// });
 
 app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, async (req, res) => {
   try {
