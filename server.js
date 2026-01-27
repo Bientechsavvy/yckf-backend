@@ -157,21 +157,32 @@ async function initializeDatabase() {
     console.log('🔄 Initializing database...');
 
     // Create users table with UNIQUE email constraint
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(255) PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        password_hash TEXT NOT NULL,
-        role VARCHAR(50) DEFAULT 'user',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+   await pool.query(`
+  CREATE TABLE IF NOT EXISTS users (
+    id VARCHAR(255) PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(20),
+    password_hash TEXT NOT NULL,
+    role VARCHAR(50) DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
     // Create index on email for faster lookups
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(LOWER(email))
     `);
+
+    try{
+      await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20)
+        `);
+          console.log('✅ Users table migrated - phone_number column added');
+    }catch(migrationError){
+        console.log('ℹ️  Users table migration: column already exists or migration not needed');
+    }
 
     // Create subscriptions table
     await pool.query(`
@@ -1144,7 +1155,7 @@ app.get('/health', (req, res) => {
 // ============================================
 app.post('/auth/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, phoneNumber } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password required' });
@@ -1205,9 +1216,9 @@ app.post('/auth/register', async (req, res) => {
     const userId = uuidv4();
 
     await pool.query(
-      'INSERT INTO users (id, email, name, password_hash, role) VALUES ($1, $2, $3, $4, $5)',
-      [userId, normalizedEmail, userName, passwordHash, 'user']
-    );
+  'INSERT INTO users (id, email, name, phone_number, password_hash, role) VALUES ($1, $2, $3, $4, $5, $6)',
+  [userId, normalizedEmail, userName, phoneNumber || null, passwordHash, 'user']
+);
 
     console.log(`✅ User registered: ${normalizedEmail} (ID: ${userId})`);
     await logAudit('USER_REGISTERED', userId, userId, { email: normalizedEmail });
