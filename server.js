@@ -841,6 +841,15 @@ async function sendEmergencyReportEmail(reportData) {
             <p style="margin: 0; font-size: 14px;">ID: ${reportData.emergencyId}</p>
           </div>
           <div class="content">
+            
+            ${reportData.userEmail || reportData.userPhone ? `
+            <div class="section">
+              <div class="section-title">👤 REPORTER CONTACT INFORMATION</div>
+              ${reportData.userEmail ? `<div class="info-row"><span class="info-label">Email:</span> ${reportData.userEmail}</div>` : ''}
+              ${reportData.userPhone ? `<div class="info-row"><span class="info-label">Phone:</span> ${reportData.userPhone}</div>` : ''}
+            </div>
+            ` : ''}
+
             <div class="section">
               <div class="section-title">📍 LOCATION INFORMATION</div>
               ${reportData.location ? `
