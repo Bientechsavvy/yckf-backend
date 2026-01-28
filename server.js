@@ -1253,16 +1253,17 @@ app.post('/auth/register', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: userId,
-        email: normalizedEmail,
-        name: userName,
-        role: 'user'
-      }
-    });
+   res.json({
+  success: true,
+  token,
+  user: {
+    id: userId,
+    email: normalizedEmail,
+    name: userName,
+    phoneNumber: phoneNumber || null,  // ⭐ ADD THIS LINE
+    role: 'user'
+  }
+});
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed' });
@@ -1305,16 +1306,17 @@ app.post('/auth/login', authLimiter, async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role
-      }
-    });
+   res.json({
+  success: true,
+  token,
+  user: {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    phoneNumber: user.phone_number,  // ⭐ ADD THIS LINE
+    role: user.role
+  }
+});
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
@@ -1345,6 +1347,7 @@ app.get('/auth/me', authenticateToken, async (req, res) => {
       id: user.id,
       email: user.email,
       name: user.name,
+      phoneNumber: user.phone_number,  // ⭐ ADD THIS LINE
       role: user.role
     });
   } catch (error) {
