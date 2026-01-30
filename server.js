@@ -738,6 +738,14 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
               <strong>SECURITY ALERT:</strong> An unauthorized unlock attempt has been detected on a YCKF protected device.
             </div>
 
+             ${evidenceData.userEmail || evidenceData.userPhone ? `
+  <div class="section">
+    <div class="section-title">👤 DEVICE OWNER CONTACT INFORMATION</div>
+    ${evidenceData.userEmail ? `<div class="info-row"><span class="info-label">Email:</span> ${evidenceData.userEmail}</div>` : ''}
+    ${evidenceData.userPhone ? `<div class="info-row"><span class="info-label">Phone:</span> ${evidenceData.userPhone}</div>` : ''}
+  </div>
+  ` : ''}
+
             <div class="section">
               <div class="section-title">��� DETECTION DETAILS</div>
               <div class="info-row"><span class="info-label">Evidence ID:</span> ${evidenceData.evidenceId}</div>
@@ -769,11 +777,13 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
             </div>
 
             <div class="actions-box">
-              <strong>⚡ IMMEDIATE ACTIONS RECOMMENDED:</strong>
-              <ol>
-                <li>Review the attached evidence immediately</li>
-                <li>Contact the device owner if registered in system</li>
-                <li>Track device location if still active</li>
+  <strong>⚡ IMMEDIATE ACTIONS RECOMMENDED:</strong>
+  <ol>
+    <li>Review the attached evidence immediately</li>
+    ${evidenceData.userEmail && evidenceData.userEmail !== 'Not available' 
+      ? `<li><strong>Contact device owner at ${evidenceData.userEmail}${evidenceData.userPhone && evidenceData.userPhone !== 'Not available' ? ` or ${evidenceData.userPhone}` : ''}</strong></li>` 
+      : '<li>Contact the device owner if registered in system</li>'}
+    <li>Track device location if still active</li>
                 <li>Consider reporting to local authorities if theft suspected</li>
                 <li>Log incident in YCKF Security Dashboard</li>
               </ol>
