@@ -612,12 +612,38 @@ async function sendCybercrimeReportEmail(reportData) {
       </html>
     `,
     attachments: reportData.evidencePhotos && reportData.evidencePhotos.length > 0
-      ? reportData.evidencePhotos.map((photo, index) => ({
-        filename: `evidence_${index + 1}.jpg`,
-        content: photo.split('base64,')[1] || photo,
-        encoding: 'base64'
-      }))
-      : []
+  ? reportData.evidencePhotos.map((photo, index) => {
+      // Extract base64 content properly
+      let base64Content = photo;
+      
+      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+      if (photo.includes('base64,')) {
+        base64Content = photo.split('base64,')[1];
+      } else if (photo.includes(',')) {
+        base64Content = photo.split(',')[1];
+      }
+      
+      // Detect MIME type from data URL or default to jpeg
+      let mimeType = 'image/jpeg';
+      if (photo.includes('data:image/png')) {
+        mimeType = 'image/png';
+      } else if (photo.includes('data:image/jpg')) {
+        mimeType = 'image/jpeg';
+      } else if (photo.includes('data:image/jpeg')) {
+        mimeType = 'image/jpeg';
+      }
+      
+      // Determine file extension
+      const extension = mimeType === 'image/png' ? 'png' : 'jpg';
+      
+      return {
+        filename: `evidence_${index + 1}.${extension}`,
+        content: base64Content,
+        encoding: 'base64',
+        contentType: mimeType
+      };
+    })
+  : []
   };
 
   await emailTransporter.sendMail(mailOptions);
@@ -804,11 +830,14 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
       </body>
       </html>
     `,
-    attachments: evidenceData.mediaBase64 ? [{
-      filename: `evidence_${evidenceData.evidenceId}.${evidenceData.mediaType === 'photo' ? 'jpg' : 'mp4'}`,
-      content: evidenceData.mediaBase64,
-      encoding: 'base64'
-    }] : []
+   attachments: evidenceData.mediaBase64 ? [{
+  filename: `evidence_${evidenceData.evidenceId}.${evidenceData.mediaType === 'photo' ? 'jpg' : 'mp4'}`,
+  content: evidenceData.mediaBase64.includes('base64,') 
+    ? evidenceData.mediaBase64.split('base64,')[1] 
+    : evidenceData.mediaBase64,
+  encoding: 'base64',
+  contentType: evidenceData.mediaType === 'photo' ? 'image/jpeg' : 'video/mp4'
+}] : []
   };
 
   await emailTransporter.sendMail(mailOptions);
@@ -1577,6 +1606,24 @@ app.post('/email/cybercrime-report', authenticateToken, emailLimiter, async (req
         success: false,
         error: 'Missing required fields (caseId, fullName, email)'
       });
+    }
+
+    // Validate and clean evidence photos
+    if (reportData.evidencePhotos && Array.isArray(reportData.evidencePhotos)) {
+      reportData.evidencePhotos = reportData.evidencePhotos.map(photo => {
+        // Remove whitespace
+        let cleaned = photo.trim();
+        
+        // Ensure it's valid base64 or data URL
+        if (!cleaned.startsWith('data:image') && !cleaned.match(/^[A-Za-z0-9+/=]+$/)) {
+          console.warn('Invalid photo format detected, skipping');
+          return null;
+        }
+        
+        return cleaned;
+      }).filter(photo => photo !== null); // Remove invalid photos
+      
+      console.log(`✅ Processing ${reportData.evidencePhotos.length} valid evidence photos`);
     }
 
     if (!emailTransporter) {
