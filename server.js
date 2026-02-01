@@ -976,6 +976,7 @@ async function sendBookingSubmissionEmail(bookingData) {
             <div class="section">
               <div class="section-title">CLIENT INFORMATION</div>
               <div class="info-row"><span class="info-label">Full Name:</span> ${bookingData.fullName}</div>
+              <div class="info-row"><span class="info-label">Email:</span> <a href="mailto:${bookingData.email}" style="color: #1E40AF;">${bookingData.email}</a></div>
               <div class="info-row"><span class="info-label">Phone Number:</span> ${bookingData.phone}</div>
             </div>
 
