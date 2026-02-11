@@ -1273,19 +1273,34 @@ app.post('/auth/register', async (req, res) => {
     await logAudit('USER_REGISTERED', userId, userId, { email: normalizedEmail });
 
     // Send account creation email
-    if (emailTransporter) {
-      try {
-        await sendAccountCreationEmail({
-          name: userName,
-          email: normalizedEmail,
-          role: 'user'
-        });
-        console.log(`✅ Welcome email sent to: ${normalizedEmail}`);
-        await logAudit('ACCOUNT_CREATION_EMAIL_SENT', userId, userId, { email: normalizedEmail });
-      } catch (emailError) {
-        console.error('Email failed:', emailError);
-      }
-    }
+if (emailTransporter) {
+  try {
+    await sendAccountCreationEmail({
+      name: userName,
+      email: normalizedEmail,
+      role: 'user'
+    });
+    console.log(`✅ Welcome email sent to: ${normalizedEmail}`);
+    await logAudit('ACCOUNT_CREATION_EMAIL_SENT', userId, userId, { email: normalizedEmail });
+  } catch (emailError) {
+    console.error('Email failed:', emailError);
+  }
+}
+
+// ⭐ NEW: Return user data with phoneNumber so frontend can send admin notification
+    // if (emailTransporter) {
+    //   try {
+    //     await sendAccountCreationEmail({
+    //       name: userName,
+    //       email: normalizedEmail,
+    //       role: 'user'
+    //     });
+    //     console.log(`✅ Welcome email sent to: ${normalizedEmail}`);
+    //     await logAudit('ACCOUNT_CREATION_EMAIL_SENT', userId, userId, { email: normalizedEmail });
+    //   } catch (emailError) {
+    //     console.error('Email failed:', emailError);
+    //   }
+    // }
 
     const token = jwt.sign(
       { id: userId, email: normalizedEmail, role: 'user' },
