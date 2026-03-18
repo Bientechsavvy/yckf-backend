@@ -157,7 +157,7 @@ async function initializeDatabase() {
     console.log('🔄 Initializing database...');
 
     // Create users table with UNIQUE email constraint
-   await pool.query(`
+    await pool.query(`
   CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(255) PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -174,14 +174,14 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(LOWER(email))
     `);
 
-    try{
+    try {
       await pool.query(`
         ALTER TABLE users
         ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20)
         `);
-          console.log('✅ Users table migrated - phone_number column added');
-    }catch(migrationError){
-        console.log('ℹ️  Users table migration: column already exists or migration not needed');
+      console.log('✅ Users table migrated - phone_number column added');
+    } catch (migrationError) {
+      console.log('ℹ️  Users table migration: column already exists or migration not needed');
     }
 
     // Create subscriptions table
@@ -199,7 +199,7 @@ async function initializeDatabase() {
     `);
 
     // Create coupons table
- // Create coupons table
+    // Create coupons table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS coupons (
         id VARCHAR(255) PRIMARY KEY,
@@ -612,38 +612,38 @@ async function sendCybercrimeReportEmail(reportData) {
       </html>
     `,
     attachments: reportData.evidencePhotos && reportData.evidencePhotos.length > 0
-  ? reportData.evidencePhotos.map((photo, index) => {
-      // Extract base64 content properly
-      let base64Content = photo;
-      
-      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-      if (photo.includes('base64,')) {
-        base64Content = photo.split('base64,')[1];
-      } else if (photo.includes(',')) {
-        base64Content = photo.split(',')[1];
-      }
-      
-      // Detect MIME type from data URL or default to jpeg
-      let mimeType = 'image/jpeg';
-      if (photo.includes('data:image/png')) {
-        mimeType = 'image/png';
-      } else if (photo.includes('data:image/jpg')) {
-        mimeType = 'image/jpeg';
-      } else if (photo.includes('data:image/jpeg')) {
-        mimeType = 'image/jpeg';
-      }
-      
-      // Determine file extension
-      const extension = mimeType === 'image/png' ? 'png' : 'jpg';
-      
-      return {
-        filename: `evidence_${index + 1}.${extension}`,
-        content: base64Content,
-        encoding: 'base64',
-        contentType: mimeType
-      };
-    })
-  : []
+      ? reportData.evidencePhotos.map((photo, index) => {
+        // Extract base64 content properly
+        let base64Content = photo;
+
+        // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+        if (photo.includes('base64,')) {
+          base64Content = photo.split('base64,')[1];
+        } else if (photo.includes(',')) {
+          base64Content = photo.split(',')[1];
+        }
+
+        // Detect MIME type from data URL or default to jpeg
+        let mimeType = 'image/jpeg';
+        if (photo.includes('data:image/png')) {
+          mimeType = 'image/png';
+        } else if (photo.includes('data:image/jpg')) {
+          mimeType = 'image/jpeg';
+        } else if (photo.includes('data:image/jpeg')) {
+          mimeType = 'image/jpeg';
+        }
+
+        // Determine file extension
+        const extension = mimeType === 'image/png' ? 'png' : 'jpg';
+
+        return {
+          filename: `evidence_${index + 1}.${extension}`,
+          content: base64Content,
+          encoding: 'base64',
+          contentType: mimeType
+        };
+      })
+      : []
   };
 
   await emailTransporter.sendMail(mailOptions);
@@ -806,9 +806,9 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
   <strong>⚡ IMMEDIATE ACTIONS RECOMMENDED:</strong>
   <ol>
     <li>Review the attached evidence immediately</li>
-    ${evidenceData.userEmail && evidenceData.userEmail !== 'Not available' 
-      ? `<li><strong>Contact device owner at ${evidenceData.userEmail}${evidenceData.userPhone && evidenceData.userPhone !== 'Not available' ? ` or ${evidenceData.userPhone}` : ''}</strong></li>` 
-      : '<li>Contact the device owner if registered in system</li>'}
+    ${evidenceData.userEmail && evidenceData.userEmail !== 'Not available'
+        ? `<li><strong>Contact device owner at ${evidenceData.userEmail}${evidenceData.userPhone && evidenceData.userPhone !== 'Not available' ? ` or ${evidenceData.userPhone}` : ''}</strong></li>`
+        : '<li>Contact the device owner if registered in system</li>'}
     <li>Track device location if still active</li>
                 <li>Consider reporting to local authorities if theft suspected</li>
                 <li>Log incident in YCKF Security Dashboard</li>
@@ -830,14 +830,14 @@ async function sendThiefDetectionEvidenceEmail(evidenceData) {
       </body>
       </html>
     `,
-   attachments: evidenceData.mediaBase64 ? [{
-  filename: `evidence_${evidenceData.evidenceId}.${evidenceData.mediaType === 'photo' ? 'jpg' : 'mp4'}`,
-  content: evidenceData.mediaBase64.includes('base64,') 
-    ? evidenceData.mediaBase64.split('base64,')[1] 
-    : evidenceData.mediaBase64,
-  encoding: 'base64',
-  contentType: evidenceData.mediaType === 'photo' ? 'image/jpeg' : 'video/mp4'
-}] : []
+    attachments: evidenceData.mediaBase64 ? [{
+      filename: `evidence_${evidenceData.evidenceId}.${evidenceData.mediaType === 'photo' ? 'jpg' : 'mp4'}`,
+      content: evidenceData.mediaBase64.includes('base64,')
+        ? evidenceData.mediaBase64.split('base64,')[1]
+        : evidenceData.mediaBase64,
+      encoding: 'base64',
+      contentType: evidenceData.mediaType === 'photo' ? 'image/jpeg' : 'video/mp4'
+    }] : []
   };
 
   await emailTransporter.sendMail(mailOptions);
@@ -1265,29 +1265,29 @@ app.post('/auth/register', async (req, res) => {
     const userId = uuidv4();
 
     await pool.query(
-  'INSERT INTO users (id, email, name, phone_number, password_hash, role) VALUES ($1, $2, $3, $4, $5, $6)',
-  [userId, normalizedEmail, userName, phoneNumber || null, passwordHash, 'user']
-);
+      'INSERT INTO users (id, email, name, phone_number, password_hash, role) VALUES ($1, $2, $3, $4, $5, $6)',
+      [userId, normalizedEmail, userName, phoneNumber || null, passwordHash, 'user']
+    );
 
     console.log(`✅ User registered: ${normalizedEmail} (ID: ${userId})`);
     await logAudit('USER_REGISTERED', userId, userId, { email: normalizedEmail });
 
     // Send account creation email
-if (emailTransporter) {
-  try {
-    await sendAccountCreationEmail({
-      name: userName,
-      email: normalizedEmail,
-      role: 'user'
-    });
-    console.log(`✅ Welcome email sent to: ${normalizedEmail}`);
-    await logAudit('ACCOUNT_CREATION_EMAIL_SENT', userId, userId, { email: normalizedEmail });
-  } catch (emailError) {
-    console.error('Email failed:', emailError);
-  }
-}
+    if (emailTransporter) {
+      try {
+        await sendAccountCreationEmail({
+          name: userName,
+          email: normalizedEmail,
+          role: 'user'
+        });
+        console.log(`✅ Welcome email sent to: ${normalizedEmail}`);
+        await logAudit('ACCOUNT_CREATION_EMAIL_SENT', userId, userId, { email: normalizedEmail });
+      } catch (emailError) {
+        console.error('Email failed:', emailError);
+      }
+    }
 
-// ⭐ NEW: Return user data with phoneNumber so frontend can send admin notification
+    // ⭐ NEW: Return user data with phoneNumber so frontend can send admin notification
     // if (emailTransporter) {
     //   try {
     //     await sendAccountCreationEmail({
@@ -1308,17 +1308,17 @@ if (emailTransporter) {
       { expiresIn: '7d' }
     );
 
-   res.json({
-  success: true,
-  token,
-  user: {
-    id: userId,
-    email: normalizedEmail,
-    name: userName,
-    phoneNumber: phoneNumber || null,  // ⭐ ADD THIS LINE
-    role: 'user'
-  }
-});
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: userId,
+        email: normalizedEmail,
+        name: userName,
+        phoneNumber: phoneNumber || null,  // ⭐ ADD THIS LINE
+        role: 'user'
+      }
+    });
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed' });
@@ -1361,17 +1361,17 @@ app.post('/auth/login', authLimiter, async (req, res) => {
       { expiresIn: '7d' }
     );
 
-   res.json({
-  success: true,
-  token,
-  user: {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    phoneNumber: user.phone_number,  // ⭐ ADD THIS LINE
-    role: user.role
-  }
-});
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        phoneNumber: user.phone_number,  // ⭐ ADD THIS LINE
+        role: user.role
+      }
+    });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
@@ -1629,16 +1629,16 @@ app.post('/email/cybercrime-report', authenticateToken, emailLimiter, async (req
       reportData.evidencePhotos = reportData.evidencePhotos.map(photo => {
         // Remove whitespace
         let cleaned = photo.trim();
-        
+
         // Ensure it's valid base64 or data URL
         if (!cleaned.startsWith('data:image') && !cleaned.match(/^[A-Za-z0-9+/=]+$/)) {
           console.warn('Invalid photo format detected, skipping');
           return null;
         }
-        
+
         return cleaned;
       }).filter(photo => photo !== null); // Remove invalid photos
-      
+
       console.log(`✅ Processing ${reportData.evidencePhotos.length} valid evidence photos`);
     }
 
@@ -2216,7 +2216,7 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
       createdAt: new Date().toISOString()
     };
 
-    await logAudit('COUPON_CREATED', req.user.id, null, { 
+    await logAudit('COUPON_CREATED', req.user.id, null, {
       code: code.toUpperCase(),
       durationType: durationType || '24h'
     });
@@ -2228,9 +2228,9 @@ app.post('/admin/coupons/create', authenticateToken, requireAdmin, async (req, r
     });
   } catch (error) {
     console.error('❌ Coupon creation error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to create coupon',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -2296,6 +2296,33 @@ app.post('/admin/coupons/deactivate', authenticateToken, requireAdmin, async (re
   }
 });
 
+
+app.delete('/admin/coupons/delete', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ error: 'Coupon code required' });
+    }
+
+    const result = await pool.query(
+      'DELETE FROM coupons WHERE UPPER(code) = UPPER($1) RETURNING *',
+      [code.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Coupon not found' });
+    }
+
+    await logAudit('COUPON_DELETED', req.user.id, null, { code });
+
+    res.json({ success: true, message: 'Coupon deleted permanently' });
+  } catch (error) {
+    console.error('Coupon delete error:', error);
+    res.status(500).json({ error: 'Failed to delete coupon' });
+  }
+});
+
 app.post('/admin/coupons/reactivate', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { code } = req.body;
@@ -2335,7 +2362,7 @@ app.get('/admin/redemptions', authenticateToken, requireAdmin, async (req, res) 
 app.get('/admin/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
-    
+
     const result = await pool.query(
       'SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT $1',
       [limit]
